@@ -356,6 +356,12 @@ class EnduranceSimulator:
             status, reason = "interrupted", "target_not_reached"
 
         arrays = {key: np.asarray(value, dtype=float) for key, value in history.items()}
+        lap_index = np.maximum(
+            np.ceil(arrays["distance"] / self.track.lap_length_m).astype(int) - 1,
+            0,
+        )
+        lap_position = (
+            arrays["distance"] - lap_index * self.track.lap_length_m)
         pending = (
             "Tensão mínima e máxima da célula não informadas.",
             "Corrente contínua e de pico da célula não informadas.",
@@ -386,12 +392,25 @@ class EnduranceSimulator:
             controller_state=np.asarray(controller_states, dtype="U16"),
             distance_to_corner_m=arrays["distance_to_corner"],
             estimated_braking_distance_m=arrays["braking_distance"],
+            lap_index=lap_index,
+            lap_position_m=lap_position,
+            segment_boundaries_m=np.asarray(self.track.boundaries_m, dtype=float),
+            segment_is_corner=np.asarray([
+                segment.radius_m is not None for segment in cfg.track_segments
+            ], dtype=bool),
+            segment_names=np.asarray([
+                segment.name for segment in cfg.track_segments
+            ], dtype="U64"),
             completed_laps=floor(distance / self.track.lap_length_m + 1e-10),
             lap_length_m=self.track.lap_length_m,
             nominal_pack_energy_wh=cfg.battery.nominal_energy_wh,
             sizing_margin_fraction=cfg.sizing_margin_fraction,
             usable_energy_fraction=cfg.usable_energy_fraction,
             max_power_residual_w=max_residual,
+            max_dc_power_w=cfg.motor.max_dc_power_w,
+            minimum_usable_soc=cfg.battery.minimum_usable_soc,
+            vehicle_mass_kg=cfg.vehicle.mass_kg,
+            gravity_m_s2=cfg.vehicle.gravity_m_s2,
             assumptions=ASSUMPTIONS,
             pending_limits=pending,
         )

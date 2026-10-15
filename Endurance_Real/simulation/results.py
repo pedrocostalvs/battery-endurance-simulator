@@ -1,9 +1,22 @@
 """Simulation result container and terminal summary formatting."""
 
 from dataclasses import dataclass
+from math import ceil
 from pathlib import Path
 
 import numpy as np
+
+
+@dataclass(frozen=True)
+class LapSummary:
+    lap_index: int
+    distance_m: float
+    time_s: float
+    terminal_energy_wh: float
+    minimum_voltage_v: float
+    maximum_voltage_v: float
+    final_soc: float
+    maximum_dc_power_w: float
 
 
 @dataclass(frozen=True)
@@ -31,12 +44,21 @@ class EnduranceResults:
     controller_state: np.ndarray
     distance_to_corner_m: np.ndarray
     estimated_braking_distance_m: np.ndarray
+    lap_index: np.ndarray
+    lap_position_m: np.ndarray
+    segment_boundaries_m: np.ndarray
+    segment_is_corner: np.ndarray
+    segment_names: np.ndarray
     completed_laps: int
     lap_length_m: float
     nominal_pack_energy_wh: float
     sizing_margin_fraction: float
     usable_energy_fraction: float
     max_power_residual_w: float
+    max_dc_power_w: float
+    minimum_usable_soc: float
+    vehicle_mass_kg: float
+    gravity_m_s2: float
     assumptions: tuple[str, ...]
     pending_limits: tuple[str, ...]
 
@@ -72,6 +94,39 @@ class EnduranceResults:
     def estimated_nominal_energy_wh(self) -> float:
         return self.required_usable_energy_wh / self.usable_energy_fraction
 
+    def lap_summary(self) -> tuple[LapSummary, ...]:
+        """Return boundary-safe per-lap metrics, including a partial last lap."""
+        if self.final_distance_m <= 0.0 or self.lap_length_m <= 0.0:
+            return ()
+        count = int(ceil(self.final_distance_m / self.lap_length_m - 1e-12))
+        boundaries = np.minimum(
+            np.arange(count + 1, dtype=float) * self.lap_length_m,
+            self.final_distance_m,
+        )
+        sample_distance = np.concatenate(([0.0], self.distance_m))
+        sample_time = np.concatenate(([0.0], self.time_s))
+        sample_energy = np.concatenate(([0.0], self.cumulative_energy_wh))
+        boundary_time = np.interp(boundaries, sample_distance, sample_time)
+        boundary_energy = np.interp(boundaries, sample_distance, sample_energy)
+        summaries = []
+        for lap in range(count):
+            mask = self.lap_index == lap
+            voltage = self.battery_voltage_v[mask]
+            power = self.electrical_power_w[mask]
+            soc = self.soc[mask]
+            summaries.append(LapSummary(
+                lap_index=lap,
+                distance_m=float(boundaries[lap + 1] - boundaries[lap]),
+                time_s=float(boundary_time[lap + 1] - boundary_time[lap]),
+                terminal_energy_wh=float(
+                    boundary_energy[lap + 1] - boundary_energy[lap]),
+                minimum_voltage_v=float(np.min(voltage)),
+                maximum_voltage_v=float(np.max(voltage)),
+                final_soc=float(soc[-1]),
+                maximum_dc_power_w=float(np.max(power)),
+            ))
+        return tuple(summaries)
+
     def save_npz(self, path: Path) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(
@@ -97,5 +152,12 @@ class EnduranceResults:
             controller_state=self.controller_state,
             distance_to_corner_m=self.distance_to_corner_m,
             estimated_braking_distance_m=self.estimated_braking_distance_m,
+            lap_index=self.lap_index,
+            lap_position_m=self.lap_position_m,
+            segment_boundaries_m=self.segment_boundaries_m,
+            segment_is_corner=self.segment_is_corner,
+            segment_names=self.segment_names,
+            max_dc_power_w=np.asarray(self.max_dc_power_w),
+            minimum_usable_soc=np.asarray(self.minimum_usable_soc),
         )
         return path

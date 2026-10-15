@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from math import ceil
 
 import numpy as np
 
@@ -125,6 +126,56 @@ class EnduranceRealTests(unittest.TestCase):
         braking = self.results.brake_force_n > 1e-6
         self.assertTrue(np.any(braking))
         self.assertTrue(np.all(self.results.electrical_power_w[braking] == 0.0))
+
+    def test_lap_summary_conserves_energy_without_boundary_double_count(self):
+        summaries = self.results.lap_summary()
+        self.assertEqual(
+            len(summaries),
+            ceil(self.results.final_distance_m / self.results.lap_length_m),
+        )
+        self.assertAlmostEqual(
+            sum(item.terminal_energy_wh for item in summaries),
+            self.results.energy_wh,
+            delta=self.results.energy_wh * 1e-6,
+        )
+        self.assertAlmostEqual(
+            sum(item.distance_m for item in summaries),
+            self.results.final_distance_m,
+            places=8,
+        )
+        self.assertEqual(int(self.results.lap_index[-1]), 21)
+        self.assertAlmostEqual(
+            float(self.results.lap_position_m[-1]), self.results.lap_length_m)
+
+    def test_lap_summary_handles_partial_final_lap(self):
+        partial_config = replace(
+            self.config, target_distance_m=2_500.0, maximum_time_s=400.0)
+        partial = EnduranceSimulator(partial_config).run()
+        summaries = partial.lap_summary()
+        self.assertEqual(len(summaries), 3)
+        self.assertAlmostEqual(summaries[-1].distance_m, 500.0, places=7)
+        self.assertAlmostEqual(
+            sum(item.terminal_energy_wh for item in summaries),
+            partial.energy_wh,
+            delta=partial.energy_wh * 1e-6,
+        )
+
+    def test_lap_and_segment_metadata_are_exported(self):
+        self.assertEqual(len(self.results.lap_index), len(self.results.time_s))
+        self.assertEqual(len(self.results.lap_position_m), len(self.results.time_s))
+        self.assertEqual(
+            len(self.results.segment_names), len(self.config.track_segments))
+        self.assertEqual(
+            len(self.results.segment_is_corner), len(self.config.track_segments))
+        with tempfile.TemporaryDirectory() as temporary:
+            path = self.results.save_npz(Path(temporary) / "results.npz")
+            with np.load(path) as data:
+                for key in (
+                    "lap_index", "lap_position_m", "segment_boundaries_m",
+                    "segment_is_corner", "segment_names", "max_dc_power_w",
+                    "minimum_usable_soc",
+                ):
+                    self.assertIn(key, data.files)
 
     def test_reference_curve_speed_limits_are_respected(self):
         track = ReferenceTrack(
@@ -259,21 +310,22 @@ class EnduranceRealTests(unittest.TestCase):
     def test_graphs_are_generated(self):
         with tempfile.TemporaryDirectory() as temporary:
             paths = generate_all_plots(self.results, Path(temporary))
-            self.assertEqual(len(paths), 7)
+            self.assertEqual(len(paths), 9)
             for path in paths:
                 self.assertTrue(path.is_file())
                 self.assertGreater(path.stat().st_size, 1_000)
 
-    def test_interactive_dashboard_has_one_window_with_seven_plots(self):
+    def test_interactive_dashboard_has_eight_visible_panels(self):
         import matplotlib.pyplot as plt
 
         figure = create_interactive_dashboard(self.results)
         try:
-            self.assertEqual(len(figure.axes), 8)
-            self.assertTrue(all(axis.get_visible() for axis in figure.axes[:7]))
-            self.assertFalse(figure.axes[7].get_visible())
-            self.assertEqual(
-                [len(axis.lines) for axis in figure.axes[:7]], [1] * 7)
+            titled_axes = [axis for axis in figure.axes if axis.get_title()]
+            self.assertEqual(len(titled_axes), 8)
+            self.assertTrue(all(axis.get_visible() for axis in titled_axes))
+            self.assertTrue(np.allclose(figure.get_size_inches(), (15.0, 11.0)))
+            self.assertIn("volta de referência 2", figure._suptitle.get_text())
+            self.assertEqual(len(titled_axes[0].patches), 4)
         finally:
             plt.close(figure)
 

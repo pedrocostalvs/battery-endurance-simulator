@@ -28,9 +28,22 @@ Pelo PowerShell, a execução equivalente é:
 - `simulation/track.py`: pista de referência e limites de velocidade em curva.
 - `simulation/endurance.py`: estratégia de condução e integração acoplada.
 - `simulation/results.py`: resultados e exportação numérica.
-- `visualization/plots.py`: sete gráficos Matplotlib não bloqueantes.
+- `visualization/plots.py`: dashboard interativo 4×2 e exportações PNG.
 - `tests/`: testes físicos, numéricos e de execução.
 - `results/`: gráficos e dados gerados.
+
+## Dashboard
+
+Ao fim da execução pelo VS Code, uma única janela interativa apresenta oito
+painéis. A volta 2 é usada como referência por padrão para evitar o transiente
+da largada; energia, tempo e SoC continuam apresentados para as 22 voltas. As
+faixas laranja identificam segmentos classificados como curvas.
+
+![Dashboard real do cenário de referência](docs/img/endurance_dashboard.png)
+
+O diagrama g-g é um diagnóstico do modelo longitudinal com aceleração lateral
+centrípeta inferida nos segmentos curvos. Ele não substitui validação de uma
+dinâmica lateral completa ou de um modelo de pneu combinado experimental.
 
 ## Equações principais
 
