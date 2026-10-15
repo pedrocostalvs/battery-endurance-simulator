@@ -1,5 +1,3 @@
-"""Run the independent preliminary 22 km endurance energy sizing scenario."""
-
 from pathlib import Path
 
 from endurance_sizing.report import write_markdown_report
@@ -15,7 +13,7 @@ def main() -> int:
     energy = result.energy
     pack = result.pack_assessment
     print("=== Dimensionamento preliminar do Endurance ===")
-    print("CENÁRIO HIPOTÉTICO — não usa o Sprint de 75 m repetido")
+    print("CENÁRIO HIPOTÉTICO")
     print(f"Distância: {energy.distance_m:.6f} m")
     print(f"Tempo: {energy.duration_s:.2f} s")
     print(f"Energia: {energy.energy_wh:.2f} Wh ({energy.energy_kwh:.4f} kWh)")
@@ -25,7 +23,7 @@ def main() -> int:
     print(f"Energia utilizável requerida com margem: "
           f"{energy.required_usable_energy_wh:.2f} Wh")
     print(f"Energia nominal mínima: {energy.minimum_nominal_energy_wh:.2f} Wh")
-    print("--- Pack genérico atual 144s5p ---")
+    print("Pack genérico atual 144s5p")
     print(f"Energia nominal: {pack.nominal_energy_wh:.2f} Wh")
     print(f"Energia considerada utilizável: {pack.usable_energy_wh:.2f} Wh")
     print(f"Estado geral: {pack.overall_status.value}")
