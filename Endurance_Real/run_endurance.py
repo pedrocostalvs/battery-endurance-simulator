@@ -14,6 +14,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from config.parameters import SimulationConfig  # noqa: E402
+from analysis.sizing import assess_battery  # noqa: E402
 from simulation.endurance import EnduranceSimulator  # noqa: E402
 from visualization.plots import (  # noqa: E402
     generate_all_plots,
@@ -30,6 +31,7 @@ def _minimum(values) -> float:
 
 
 def print_summary(results, config: SimulationConfig) -> None:
+    sizing = assess_battery(results, config)
     print("\n" + "=" * 72)
     print("XANGÔ e-RACING — SIMULAÇÃO FÍSICA DE ENDURANCE")
     print("PERCURSO HIPOTÉTICO DE REFERÊNCIA; NÃO É UMA PISTA REAL VALIDADA")
@@ -47,13 +49,16 @@ def print_summary(results, config: SimulationConfig) -> None:
     print(f"Comprimento da volta:   {results.lap_length_m:.2f} m")
 
     print("\n[Energia]")
-    print(f"Energia consumida:      {results.energy_wh:.2f} Wh")
-    print(f"Energia consumida:      {results.energy_wh / 1000.0:.4f} kWh")
+    print(f"Energia nos terminais:  {results.energy_wh:.2f} Wh")
+    print(f"Energia nos terminais:  {results.energy_wh / 1000.0:.4f} kWh")
+    print(f"Perdas internas:        {results.internal_loss_wh:.2f} Wh")
+    print(f"Energia interna estim.: {results.internal_energy_estimate_wh:.2f} Wh")
     print(f"Consumo específico:     {results.specific_energy_wh_km:.2f} Wh/km")
     print(f"Potência DC média:      {results.mean_power_w / 1000.0:.2f} kW")
     print(f"Potência DC máxima:     {_maximum(results.electrical_power_w) / 1000.0:.2f} kW")
-    print(f"Energia com margem:     {results.required_usable_energy_wh:.2f} Wh")
-    print(f"Energia nominal estim.: {results.estimated_nominal_energy_wh:.2f} Wh")
+    print(f"Energia utilizável mín.:{sizing.required_usable_energy_wh:>10.2f} Wh")
+    print(f"Energia nominal mín.:   {sizing.required_nominal_energy_wh:.2f} Wh")
+    print(f"Capacidade mínima:      {sizing.minimum_pack_capacity_ah:.2f} Ah")
 
     print("\n[Bateria]")
     print(f"Configuração:           {config.battery.series_cells}s{config.battery.parallel_cells}p")
@@ -63,8 +68,13 @@ def print_summary(results, config: SimulationConfig) -> None:
     print(f"Tensão mínima/máxima:   {_minimum(results.battery_voltage_v):.2f} / "
           f"{_maximum(results.battery_voltage_v):.2f} V")
     print(f"Corrente máxima:        {_maximum(results.battery_current_a):.2f} A")
+    print(f"Corrente média:         {results.mean_battery_current_a:.2f} A")
+    print(f"C-rate máximo atual:    {results.existing_pack_peak_c_rate:.2f} C")
+    print(f"C-rate requerido mín.:  {results.required_peak_c_rate:.2f} C")
     print(f"Potência máxima:        {_maximum(results.electrical_power_w) / 1000.0:.2f} kW")
     print(f"Residual elétrico máx.: {results.max_power_residual_w:.3e} W")
+    print(f"Suficiência energética:{' SIM' if sizing.energy_sufficient else ' NÃO'}")
+    print(f"Limites elétricos:      {sizing.electrical_limits_status}")
     print("Limites pendentes:")
     for item in results.pending_limits:
         print(f"  - {item}")

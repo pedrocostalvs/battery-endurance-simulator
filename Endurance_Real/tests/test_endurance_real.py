@@ -21,6 +21,7 @@ from config.parameters import (  # noqa: E402
     SimulationConfig,
     TireConfig,
 )
+from analysis.sizing import assess_battery  # noqa: E402
 from models.battery import BatteryModel  # noqa: E402
 from simulation.endurance import EnduranceSimulator  # noqa: E402
 from simulation.track import ReferenceTrack  # noqa: E402
@@ -113,6 +114,12 @@ class EnduranceRealTests(unittest.TestCase):
             result.acceleration_m_s2, result.electrical_power_w,
             result.battery_current_a, result.battery_voltage_v, result.soc,
             result.cumulative_energy_wh,
+            result.battery_open_circuit_voltage_v,
+            result.battery_voltage_drop_v,
+            result.cumulative_internal_loss_wh,
+            result.cumulative_internal_energy_estimate_wh,
+            result.motor_mechanical_power_w,
+            result.wheel_mechanical_power_w,
             result.target_speed_m_s, result.throttle_command,
             result.brake_command, result.distance_to_corner_m,
             result.estimated_braking_distance_m,
@@ -123,9 +130,83 @@ class EnduranceRealTests(unittest.TestCase):
         self.assertTrue(np.all(np.diff(self.results.soc) <= 1e-12))
         self.assertTrue(np.all(
             np.diff(self.results.cumulative_energy_wh) >= -1e-12))
+        self.assertTrue(np.all(
+            np.diff(self.results.cumulative_internal_loss_wh) >= -1e-12))
+        self.assertTrue(np.all(
+            np.diff(self.results.cumulative_internal_energy_estimate_wh)
+            >= -1e-12))
         braking = self.results.brake_force_n > 1e-6
         self.assertTrue(np.any(braking))
         self.assertTrue(np.all(self.results.electrical_power_w[braking] == 0.0))
+
+    def test_battery_voltage_and_internal_energy_balance(self):
+        result = self.results
+        resistance = self.simulator.battery.equivalent_resistance_ohm
+        np.testing.assert_allclose(
+            result.battery_open_circuit_voltage_v,
+            result.battery_voltage_v + result.battery_voltage_drop_v,
+            rtol=1e-12,
+            atol=1e-10,
+        )
+        np.testing.assert_allclose(
+            result.battery_voltage_drop_v,
+            result.battery_current_a * resistance,
+            rtol=1e-12,
+            atol=1e-10,
+        )
+        np.testing.assert_allclose(
+            result.battery_open_circuit_voltage_v * result.battery_current_a,
+            result.electrical_power_w + result.battery_loss_w,
+            rtol=1e-12,
+            atol=1e-8,
+        )
+        np.testing.assert_allclose(
+            result.cumulative_internal_energy_estimate_wh,
+            result.cumulative_energy_wh + result.cumulative_internal_loss_wh,
+            rtol=1e-12,
+            atol=1e-10,
+        )
+
+    def test_integrated_current_soc_and_loss_are_consistent(self):
+        result = self.results
+        dt = np.diff(np.concatenate(([0.0], result.time_s)))
+        charge_ah = float(np.sum(result.battery_current_a * dt) / 3600.0)
+        expected_soc_drop = charge_ah / result.pack_capacity_ah
+        self.assertAlmostEqual(
+            result.initial_soc - float(result.soc[-1]),
+            expected_soc_drop,
+            delta=1e-10,
+        )
+        integrated_loss = float(np.sum(result.battery_loss_w * dt) / 3600.0)
+        self.assertAlmostEqual(
+            result.internal_loss_wh, integrated_loss, delta=1e-10)
+
+    def test_powertrain_power_chain_is_not_double_counted(self):
+        efficiency = (
+            self.config.motor.motor_efficiency
+            * self.config.motor.inverter_efficiency)
+        np.testing.assert_allclose(
+            self.results.motor_mechanical_power_w,
+            self.results.electrical_power_w * efficiency,
+            rtol=1e-12,
+            atol=1e-8,
+        )
+        self.assertTrue(np.all(
+            self.results.wheel_mechanical_power_w
+            <= self.results.motor_mechanical_power_w + 1e-8))
+
+    def test_preliminary_battery_sizing_keeps_missing_limits_pending(self):
+        sizing = assess_battery(self.results, self.config)
+        self.assertGreater(
+            sizing.internal_energy_estimate_wh, sizing.terminal_energy_wh)
+        self.assertGreater(
+            sizing.required_nominal_energy_wh,
+            sizing.required_usable_energy_wh,
+        )
+        self.assertTrue(sizing.energy_sufficient)
+        self.assertTrue(sizing.power_within_configured_limit)
+        self.assertEqual(sizing.electrical_limits_status, "PENDING")
+        self.assertGreater(len(sizing.pending_limits), 0)
 
     def test_lap_summary_conserves_energy_without_boundary_double_count(self):
         summaries = self.results.lap_summary()
@@ -174,6 +255,11 @@ class EnduranceRealTests(unittest.TestCase):
                     "lap_index", "lap_position_m", "segment_boundaries_m",
                     "segment_is_corner", "segment_names", "max_dc_power_w",
                     "minimum_usable_soc",
+                    "battery_open_circuit_voltage_v",
+                    "battery_voltage_drop_v",
+                    "cumulative_internal_loss_wh",
+                    "cumulative_internal_energy_estimate_wh",
+                    "motor_mechanical_power_w", "wheel_mechanical_power_w",
                 ):
                     self.assertIn(key, data.files)
 
@@ -310,7 +396,7 @@ class EnduranceRealTests(unittest.TestCase):
     def test_graphs_are_generated(self):
         with tempfile.TemporaryDirectory() as temporary:
             paths = generate_all_plots(self.results, Path(temporary))
-            self.assertEqual(len(paths), 9)
+            self.assertEqual(len(paths), 10)
             for path in paths:
                 self.assertTrue(path.is_file())
                 self.assertGreater(path.stat().st_size, 1_000)

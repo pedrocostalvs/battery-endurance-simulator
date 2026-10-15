@@ -30,10 +30,16 @@ class EnduranceResults:
     electrical_power_w: np.ndarray
     battery_current_a: np.ndarray
     battery_voltage_v: np.ndarray
+    battery_open_circuit_voltage_v: np.ndarray
+    battery_voltage_drop_v: np.ndarray
     soc: np.ndarray
     cumulative_energy_wh: np.ndarray
     battery_loss_w: np.ndarray
+    cumulative_internal_loss_wh: np.ndarray
+    cumulative_internal_energy_estimate_wh: np.ndarray
     motor_torque_nm: np.ndarray
+    motor_mechanical_power_w: np.ndarray
+    wheel_mechanical_power_w: np.ndarray
     drive_force_n: np.ndarray
     brake_force_n: np.ndarray
     lateral_force_n: np.ndarray
@@ -57,6 +63,9 @@ class EnduranceResults:
     max_power_residual_w: float
     max_dc_power_w: float
     minimum_usable_soc: float
+    initial_soc: float
+    nominal_pack_voltage_v: float
+    pack_capacity_ah: float
     vehicle_mass_kg: float
     gravity_m_s2: float
     assumptions: tuple[str, ...]
@@ -83,6 +92,25 @@ class EnduranceResults:
         return self.energy_wh * 3600.0 / self.total_time_s if self.total_time_s > 0 else 0.0
 
     @property
+    def internal_loss_wh(self) -> float:
+        return (
+            float(self.cumulative_internal_loss_wh[-1])
+            if len(self.cumulative_internal_loss_wh) else 0.0)
+
+    @property
+    def internal_energy_estimate_wh(self) -> float:
+        return (
+            float(self.cumulative_internal_energy_estimate_wh[-1])
+            if len(self.cumulative_internal_energy_estimate_wh) else 0.0)
+
+    @property
+    def mean_battery_current_a(self) -> float:
+        if self.total_time_s <= 0.0:
+            return 0.0
+        dt = np.diff(np.concatenate(([0.0], self.time_s)))
+        return float(np.sum(self.battery_current_a * dt) / self.total_time_s)
+
+    @property
     def specific_energy_wh_km(self) -> float:
         return self.energy_wh / (self.final_distance_m / 1000.0) if self.final_distance_m > 0 else 0.0
 
@@ -93,6 +121,47 @@ class EnduranceResults:
     @property
     def estimated_nominal_energy_wh(self) -> float:
         return self.required_usable_energy_wh / self.usable_energy_fraction
+
+    @property
+    def usable_soc_window(self) -> float:
+        return min(
+            self.usable_energy_fraction,
+            self.initial_soc - self.minimum_usable_soc,
+        )
+
+    @property
+    def required_internal_usable_energy_wh(self) -> float:
+        return self.internal_energy_estimate_wh * (1.0 + self.sizing_margin_fraction)
+
+    @property
+    def required_internal_nominal_energy_wh(self) -> float:
+        if self.usable_soc_window <= 0.0:
+            return float("inf")
+        return self.required_internal_usable_energy_wh / self.usable_soc_window
+
+    @property
+    def minimum_pack_capacity_ah(self) -> float:
+        if self.nominal_pack_voltage_v <= 0.0:
+            return float("inf")
+        return self.required_internal_nominal_energy_wh / self.nominal_pack_voltage_v
+
+    @property
+    def required_peak_c_rate(self) -> float:
+        if self.minimum_pack_capacity_ah <= 0.0:
+            return float("inf")
+        maximum_current = (
+            float(np.max(self.battery_current_a))
+            if len(self.battery_current_a) else 0.0)
+        return maximum_current / self.minimum_pack_capacity_ah
+
+    @property
+    def existing_pack_peak_c_rate(self) -> float:
+        if self.pack_capacity_ah <= 0.0:
+            return float("inf")
+        maximum_current = (
+            float(np.max(self.battery_current_a))
+            if len(self.battery_current_a) else 0.0)
+        return maximum_current / self.pack_capacity_ah
 
     def lap_summary(self) -> tuple[LapSummary, ...]:
         """Return boundary-safe per-lap metrics, including a partial last lap."""
@@ -138,10 +207,17 @@ class EnduranceResults:
             electrical_power_w=self.electrical_power_w,
             battery_current_a=self.battery_current_a,
             battery_voltage_v=self.battery_voltage_v,
+            battery_open_circuit_voltage_v=self.battery_open_circuit_voltage_v,
+            battery_voltage_drop_v=self.battery_voltage_drop_v,
             soc=self.soc,
             cumulative_energy_wh=self.cumulative_energy_wh,
             battery_loss_w=self.battery_loss_w,
+            cumulative_internal_loss_wh=self.cumulative_internal_loss_wh,
+            cumulative_internal_energy_estimate_wh=(
+                self.cumulative_internal_energy_estimate_wh),
             motor_torque_nm=self.motor_torque_nm,
+            motor_mechanical_power_w=self.motor_mechanical_power_w,
+            wheel_mechanical_power_w=self.wheel_mechanical_power_w,
             drive_force_n=self.drive_force_n,
             brake_force_n=self.brake_force_n,
             lateral_force_n=self.lateral_force_n,

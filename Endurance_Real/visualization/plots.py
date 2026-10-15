@@ -229,6 +229,39 @@ def generate_all_plots(
         figure.savefig(path, dpi=180)
         plt.close(figure)
         paths.append(path)
+
+    figure, axis = plt.subplots(figsize=(10, 5.8), constrained_layout=True)
+    secondary = axis.twinx()
+    axis.plot(
+        results.time_s,
+        results.battery_open_circuit_voltage_v,
+        label="OCV modelada",
+        linewidth=1.0,
+    )
+    axis.plot(
+        results.time_s,
+        results.battery_voltage_v,
+        label="Tensão terminal",
+        linewidth=1.0,
+    )
+    secondary.plot(
+        results.time_s,
+        results.battery_voltage_drop_v,
+        color="tab:red",
+        label="Queda I·R",
+        linewidth=0.9,
+        alpha=0.8,
+    )
+    axis.set_title("Diagnóstico de tensão da bateria")
+    axis.set_xlabel("Tempo (s)")
+    axis.set_ylabel("OCV e tensão terminal (V)")
+    secondary.set_ylabel("Queda resistiva (V)", color="tab:red")
+    axis.grid(True, alpha=0.25)
+    _combined_legend(axis, secondary)
+    diagnostic_path = output_dir / "09_battery_voltage_diagnostics.png"
+    figure.savefig(diagnostic_path, dpi=180)
+    plt.close(figure)
+    paths.append(diagnostic_path)
     return tuple(paths)
 
 

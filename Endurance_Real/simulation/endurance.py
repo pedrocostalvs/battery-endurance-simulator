@@ -219,6 +219,8 @@ class EnduranceSimulator:
             "brake_force", "lateral_force", "speed_limit",
             "target_speed", "throttle", "brake_command",
             "distance_to_corner", "braking_distance",
+            "open_voltage", "voltage_drop", "cumulative_loss",
+            "cumulative_internal_energy", "motor_power", "wheel_power",
         )}
         controller_states: list[str] = []
 
@@ -280,6 +282,7 @@ class EnduranceSimulator:
             else:
                 actual_motor_torque = 0.0
             motor_mechanical_power = actual_motor_torque * motor_speed
+            wheel_mechanical_power = drive_force * speed
             electrical_power = (
                 motor_mechanical_power
                 / (cfg.motor.motor_efficiency * cfg.motor.inverter_efficiency)
@@ -335,10 +338,21 @@ class EnduranceSimulator:
             history["power"].append(electrical_power)
             history["current"].append(battery_point.current_a)
             history["voltage"].append(battery_point.terminal_voltage_v)
+            history["open_voltage"].append(
+                battery_point.open_circuit_voltage_v)
+            history["voltage_drop"].append(
+                battery_point.open_circuit_voltage_v
+                - battery_point.terminal_voltage_v)
             history["soc"].append(self.battery.soc)
             history["energy"].append(self.battery.energy_delivered_wh)
             history["loss"].append(battery_point.resistive_loss_w)
+            history["cumulative_loss"].append(self.battery.resistive_loss_wh)
+            history["cumulative_internal_energy"].append(
+                self.battery.energy_delivered_wh
+                + self.battery.resistive_loss_wh)
             history["torque"].append(actual_motor_torque)
+            history["motor_power"].append(motor_mechanical_power)
+            history["wheel_power"].append(wheel_mechanical_power)
             history["drive_force"].append(drive_force)
             history["brake_force"].append(brake_force)
             history["lateral_force"].append(lateral_force)
@@ -378,10 +392,17 @@ class EnduranceSimulator:
             electrical_power_w=arrays["power"],
             battery_current_a=arrays["current"],
             battery_voltage_v=arrays["voltage"],
+            battery_open_circuit_voltage_v=arrays["open_voltage"],
+            battery_voltage_drop_v=arrays["voltage_drop"],
             soc=arrays["soc"],
             cumulative_energy_wh=arrays["energy"],
             battery_loss_w=arrays["loss"],
+            cumulative_internal_loss_wh=arrays["cumulative_loss"],
+            cumulative_internal_energy_estimate_wh=(
+                arrays["cumulative_internal_energy"]),
             motor_torque_nm=arrays["torque"],
+            motor_mechanical_power_w=arrays["motor_power"],
+            wheel_mechanical_power_w=arrays["wheel_power"],
             drive_force_n=arrays["drive_force"],
             brake_force_n=arrays["brake_force"],
             lateral_force_n=arrays["lateral_force"],
@@ -409,6 +430,10 @@ class EnduranceSimulator:
             max_power_residual_w=max_residual,
             max_dc_power_w=cfg.motor.max_dc_power_w,
             minimum_usable_soc=cfg.battery.minimum_usable_soc,
+            initial_soc=cfg.battery.initial_soc,
+            nominal_pack_voltage_v=cfg.battery.nominal_voltage_v,
+            pack_capacity_ah=(
+                cfg.battery.parallel_cells * cfg.battery.cell_capacity_ah),
             vehicle_mass_kg=cfg.vehicle.mass_kg,
             gravity_m_s2=cfg.vehicle.gravity_m_s2,
             assumptions=ASSUMPTIONS,

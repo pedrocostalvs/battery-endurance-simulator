@@ -186,6 +186,23 @@ contínua/de pico da célula, limites térmicos, envelhecimento, curva OCV×SoC,
 resistência em função de SoC/temperatura, mapas de eficiência, telemetria real e
 requisitos regulamentares aplicáveis.
 
+### Resultado do cenário atual
+
+Para o cenário executado de 22 km, o modelo calcula 2.642,36 Wh entregues nos
+terminais e 69,94 Wh dissipados em `R_eq`. A estimativa interna é 2.712,30 Wh.
+Com margem de 20% e janela utilizável de 80%, a estimativa nominal mínima é
+4.068,45 Wh, equivalente a 7,64 Ah na tensão nominal de 532,8 V.
+
+O pack genérico 144s5p possui 15 Ah e 7.992 Wh nominais, portanto atende ao
+critério energético do cenário. Isso **não aprova** a configuração: tensão
+máxima/mínima, corrente de célula, C-rate permitido, temperatura, isolamento,
+proteções e regras aplicáveis continuam pendentes. A corrente simulada chega a
+29,46 A no pack, ou 5,89 A por célula no arranjo 5p.
+
+Uma configuração 144s3p seria o mínimo inteiro apenas pelo critério de energia;
+ela não é recomendação, pois os limites de corrente e tensão da célula são
+desconhecidos.
+
 ## Testes
 
 Windows:
@@ -203,7 +220,12 @@ MPLBACKEND=Agg ./.venv/bin/python -m unittest discover -s Endurance_Real/tests -
 
 Os testes cobrem aderência, limites de curva, potência DC, SoC, controlador,
 inversões de comando, convergência temporal, distância final, resumos por
-volta, NPZ, dashboard e execução direta.
+volta, conservação energética, dimensionamento preliminar, NPZ, dashboard e
+execução direta. A sensibilidade completa pode ser reproduzida com:
+
+```powershell
+.\.venv\Scripts\python.exe Endurance_Real\scripts\sensitivity_energy.py
+```
 
 ## Créditos e publicação
 
