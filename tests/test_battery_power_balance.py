@@ -36,6 +36,21 @@ class BatteryPowerBalanceTests(unittest.TestCase):
             delta=tolerance,
         )
 
+    @staticmethod
+    def _make_motor():
+        return Motor(
+            rs=0.00706,
+            ld=0.0000965,
+            lq=0.0000965,
+            jm=0.02521,
+            kf=0.005,
+            lambda_m=0.04748,
+            p=10,
+            valor_mu=0.95,
+            speed_ref=575.96,
+            max_current=323.0,
+        )
+
     def test_zero_power_returns_open_circuit_point(self):
         solution = self.battery.resolver_potencia_descarga(0.0, 1.0, 0.0, 0.0)
 
@@ -121,20 +136,8 @@ class BatteryPowerBalanceTests(unittest.TestCase):
                 self.battery.resolver_potencia_descarga(*args)
 
     def test_simulation_stops_before_integrating_infeasible_power(self):
-        motor = Motor(
-            rs=0.00706,
-            ld=0.0000965,
-            lq=0.0000965,
-            jm=0.02521,
-            kf=0.005,
-            lambda_m=0.04748,
-            p=10,
-            valor_mu=0.95,
-            speed_ref=575.96,
-            max_current=323.0,
-        )
         simulation = Simulation(
-            motor=motor,
+            motor=self._make_motor(),
             battery=self.battery,
             p_max_dc=None,
             tmax=0.001,
@@ -153,6 +156,119 @@ class BatteryPowerBalanceTests(unittest.TestCase):
             event["requested_power"], event["max_available_power"])
         self.assertTrue(np.isfinite(event["current"]))
         self.assertTrue(np.isfinite(event["voltage"]))
+
+    def test_hard_iq_limit_is_continuous_at_constant_torque_transition(self):
+        simulation = Simulation(motor=self._make_motor(), p_max_dc=80_000.0)
+        transition_speed = (
+            simulation.p_max_dc * simulation.eta_drive
+            / (simulation.Kt * simulation.max_current)
+        )
+        epsilon = 1e-7 * transition_speed
+
+        below = simulation._hard_iq_power_limit(transition_speed - epsilon)
+        at_transition = simulation._hard_iq_power_limit(transition_speed)
+        above = simulation._hard_iq_power_limit(transition_speed + epsilon)
+
+        self.assertAlmostEqual(below, simulation.max_current)
+        self.assertAlmostEqual(at_transition, simulation.max_current)
+        self.assertLess(above, simulation.max_current)
+        self.assertLess(below - above, 1e-3)
+
+    def test_hard_iq_limit_handles_zero_negative_and_extreme_speed(self):
+        simulation = Simulation(motor=self._make_motor(), p_max_dc=80_000.0)
+
+        self.assertEqual(
+            simulation._hard_iq_power_limit(0.0), simulation.max_current)
+        self.assertEqual(
+            simulation._hard_iq_power_limit(1e-12), simulation.max_current)
+        self.assertAlmostEqual(
+            simulation._hard_iq_power_limit(-1_000.0),
+            simulation._hard_iq_power_limit(1_000.0),
+        )
+        extreme = simulation._hard_iq_power_limit(1e12)
+        self.assertTrue(np.isfinite(extreme))
+        self.assertGreater(extreme, 0.0)
+
+    def test_hard_iq_limit_conserves_requested_power(self):
+        simulation = Simulation(motor=self._make_motor(), p_max_dc=80_000.0)
+        for speed in (400.0, 575.96, 1_000.0, 10_000.0):
+            with self.subTest(speed=speed):
+                iq_limit = simulation._hard_iq_power_limit(speed)
+                requested = simulation._requested_dc_power(iq_limit, speed)
+                self.assertAlmostEqual(
+                    requested,
+                    simulation.p_max_dc,
+                    delta=simulation._dc_power_limit_tolerance(),
+                )
+
+    def test_actual_current_power_violation_stops_before_rk4(self):
+        simulation = Simulation(
+            motor=self._make_motor(),
+            battery=self.battery,
+            p_max_dc=80_000.0,
+            tmax=0.001,
+            dmax=None,
+        )
+        simulation.wm0 = 500.0
+        iq_at_limit = simulation._hard_iq_power_limit(simulation.wm0)
+        simulation.isq0 = iq_at_limit * (1.0 + 1e-5)
+
+        result = simulation.simulate(tf=0.001)
+
+        self.assertEqual(result["termination_reason"], "dc_power_limit")
+        self.assertEqual(len(result["t"]), 0)
+        self.assertIsNone(result["battery_power_limit_event"])
+        event = result["dc_power_limit_event"]
+        self.assertIsNotNone(event)
+        self.assertGreater(
+            event["requested_power"],
+            event["power_limit"] + event["tolerance"],
+        )
+        self.assertAlmostEqual(event["current_q"], simulation.isq0)
+        self.assertAlmostEqual(event["omega_m"], simulation.wm0)
+
+    def test_dc_power_tolerance_only_covers_floating_point_noise(self):
+        simulation = Simulation(motor=self._make_motor(), p_max_dc=80_000.0)
+        tolerance = simulation._dc_power_limit_tolerance()
+
+        self.assertAlmostEqual(tolerance, 0.000081)
+        self.assertFalse(simulation._dc_power_limit_exceeded(80_000.0))
+        self.assertFalse(
+            simulation._dc_power_limit_exceeded(80_000.0 + tolerance))
+        self.assertTrue(
+            simulation._dc_power_limit_exceeded(
+                np.nextafter(80_000.0 + tolerance, np.inf)))
+
+    def test_invalid_dc_power_limits_are_rejected(self):
+        for invalid_limit in (0.0, -1.0, np.nan, np.inf):
+            with self.subTest(limit=invalid_limit), self.assertRaises(ValueError):
+                Simulation(
+                    motor=self._make_motor(), p_max_dc=invalid_limit)
+
+    def test_rk4_converges_near_dc_power_limit(self):
+        simulation = Simulation(motor=self._make_motor(), p_max_dc=80_000.0)
+        speed = 500.0
+        iq = 0.95 * simulation._hard_iq_power_limit(speed)
+        x0 = np.array([0.0, iq, 0.0, speed, 0.0, 25.0])
+        dt = 1e-4
+
+        def integrate(substeps):
+            x = x0.copy()
+            local_dt = dt / substeps
+            for step in range(substeps):
+                x = simulation._rk4(
+                    step * local_dt, x, 0.0, 0.0, 0.0, local_dt)
+            return x
+
+        coarse = integrate(1)
+        medium = integrate(2)
+        fine = integrate(4)
+        coarse_delta = np.linalg.norm(coarse - medium)
+        fine_delta = np.linalg.norm(medium - fine)
+
+        self.assertTrue(np.all(np.isfinite(fine)))
+        self.assertGreater(coarse_delta, 0.0)
+        self.assertLess(fine_delta, coarse_delta)
 
 
 if __name__ == "__main__":

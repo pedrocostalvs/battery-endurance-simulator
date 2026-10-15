@@ -83,6 +83,10 @@ class Simulation:
     """
 
     HP: float = 1e-4  # passo de integração / controle [s]
+    # Margem exclusivamente numérica para comparar a potência calculada em
+    # ponto flutuante com o limite regulamentar. Em 80 kW resulta em 81 µW.
+    DC_POWER_LIMIT_RTOL: float = 1e-9
+    DC_POWER_LIMIT_ATOL: float = 1e-6
 
     def __init__(self,
                  motor: Optional[Motor] = None,
@@ -111,6 +115,9 @@ class Simulation:
         #     iq_max = P_max_dc·η / (Kt·ω)
         # → torque constante até a velocidade-base, potência constante acima.
         self.p_max_dc = float(p_max_dc) if p_max_dc is not None else None
+        if (self.p_max_dc is not None
+                and (not np.isfinite(self.p_max_dc) or self.p_max_dc <= 0.0)):
+            raise ValueError("p_max_dc deve ser finito e estritamente positivo")
         # Eficiência estimada motor+inversor — usada no balanço de potência
         # DC↔mecânica (corrente de bateria e teto de potência).
         self.eta_drive = 0.90
@@ -228,6 +235,7 @@ class Simulation:
         self._init_storage()
         self.termination_reason = None
         self.battery_power_limit_event = None
+        self.dc_power_limit_event = None
 
     # ─────────────────────────────────────────────────────────────────────────
     # Condições iniciais e armazenamento
@@ -304,6 +312,33 @@ class Simulation:
         else:
             soc = 1.0; Iast = tacc = 0.0
         return isd, isq, iso, wm, theta_m, temp, vv, vp, soc, Iast, tacc
+
+    def _requested_dc_power(self, isq: float, wm: float) -> float:
+        """Potência DC pedida pelo estado eletromecânico instantâneo."""
+        return max(self.Kt * float(isq) * float(wm) / self.eta_drive, 0.0)
+
+    def _dc_power_limit_tolerance(self) -> float:
+        """Tolerância de arredondamento, não uma margem operacional."""
+        if self.p_max_dc is None:
+            return 0.0
+        return (self.DC_POWER_LIMIT_ATOL
+                + self.DC_POWER_LIMIT_RTOL * abs(self.p_max_dc))
+
+    def _dc_power_limit_exceeded(self, requested_power: float) -> bool:
+        if self.p_max_dc is None:
+            return False
+        return requested_power > (
+            self.p_max_dc + self._dc_power_limit_tolerance())
+
+    def _hard_iq_power_limit(self, wm: float) -> float:
+        """Teto instantâneo de iq_ref calculado com a velocidade real."""
+        if self.p_max_dc is None or self.Kt <= 0.0:
+            return self.max_current
+        wm_for_power = max(abs(float(wm)), self.wm_floor)
+        return min(
+            self.max_current,
+            self.p_max_dc * self.eta_drive / (self.Kt * wm_for_power),
+        )
 
     # ─────────────────────────────────────────────────────────────────────────
     # ODE física pura — sem PIDs, sem side-effects
@@ -498,6 +533,7 @@ class Simulation:
         self.wm_filt = 0.0   # filtro LP do limitador de velocidade
         self.termination_reason = 'completed'
         self.battery_power_limit_event = None
+        self.dc_power_limit_event = None
 
         x = self._build_x0()
         t = float(t0)
@@ -518,7 +554,35 @@ class Simulation:
             # DC, mas não valida o modelo completo do motor/inversor.
             Ce_now = self.Kt * isq
             P_mec  = Ce_now * wm
-            P_ac   = max(P_mec / self.eta_drive, 0.0)
+            P_ac   = self._requested_dc_power(isq, wm)
+
+            # Barreira independente sobre o estado REAL (iq, wm), executada
+            # antes do solver da bateria e, portanto, antes de qualquer RK4.
+            # Não recorta potência: um estado incompatível gera diagnóstico
+            # e encerramento controlado para preservar a coerência mecânica.
+            if self._dc_power_limit_exceeded(P_ac):
+                tolerance = self._dc_power_limit_tolerance()
+                self.termination_reason = 'dc_power_limit'
+                self.dc_power_limit_event = {
+                    'time': float(t),
+                    'requested_power': float(P_ac),
+                    'power_limit': float(self.p_max_dc),
+                    'tolerance': float(tolerance),
+                    'current_q': float(isq),
+                    'omega_m': float(wm),
+                    'torque': float(Ce_now),
+                }
+                print(
+                    "[DCPowerLimit] Simulação encerrada: "
+                    f"t={t:.6f} s  "
+                    f"P_solicitada={P_ac:.6f} W  "
+                    f"P_limite={self.p_max_dc:.3f} W  "
+                    f"tolerância={tolerance:.9f} W  "
+                    f"iq={isq:.6f} A  "
+                    f"wm={wm:.6f} rad/s  "
+                    f"torque={Ce_now:.6f} N·m"
+                )
+                break
 
             if self.battery is not None:
                 power_solution = self.battery.resolver_potencia_descarga(
@@ -611,7 +675,13 @@ class Simulation:
             else:
                 iq_from_power = self.max_current
 
-            iq_ref = float(np.clip(min(iq_pedal, iq_from_speed, iq_from_power),
+            # Segunda camada: teto rígido da referência baseado em wm real.
+            # O limitador suave filtrado acima é preservado; este teto impede
+            # que o atraso do filtro, por si só, solicite Pdc acima de p_max_dc.
+            iq_from_power_hard = self._hard_iq_power_limit(wm)
+
+            iq_ref = float(np.clip(min(iq_pedal, iq_from_speed, iq_from_power,
+                                       iq_from_power_hard),
                                    0.0, self.max_current))
             sp_err = effective_speed_ref - wm   # logado apenas para diagnóstico
 
@@ -754,7 +824,9 @@ class Simulation:
             setattr(self, _name, getattr(self, _name)[:n_used])
 
         if n_used:
-            print(f"✅ Concluído — {n_used} pontos  "
+            outcome = ("✅ Concluído" if self.termination_reason == 'completed'
+                       else "⛔ Interrompido")
+            print(f"{outcome} — {n_used} pontos  "
                   f"t_final={self.tempo[-1]:.3f} s  "
                   f"dist_final={self.vehicle_position[-1]:.2f} m  "
                   f"SoC final={self.soc_hist[-1]:.3f}  "
@@ -798,4 +870,5 @@ class Simulation:
             'effective_speed_ref':    np.array(self.effective_speed_ref_hist),
             'termination_reason':     self.termination_reason,
             'battery_power_limit_event': self.battery_power_limit_event,
+            'dc_power_limit_event':   self.dc_power_limit_event,
         }
