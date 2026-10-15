@@ -24,11 +24,23 @@ class VehicleConfig:
     cg_height_m: float = 0.28              # KNOWN
     cg_from_front_axle_m: float = 0.6      # KNOWN
     driven_wheels: int = 2
-    tire_friction_coefficient: float = 0.6 # KNOWN configured value
     lift_coefficient_front: float = 1.0    # KNOWN configured value
     lift_area_front_m2: float = 0.35       # KNOWN configured value
     lift_coefficient_rear: float = 1.0     # KNOWN configured value
     lift_area_rear_m2: float = 0.35        # KNOWN configured value
+
+
+@dataclass(frozen=True)
+class TireConfig:
+    """Single simplified grip coefficient used by all tire consumers.
+
+    The value is the existing 0.60 scenario value.  It is an ``ASSUMPTION``
+    until longitudinal and lateral tire data identify separate coefficients.
+    The original Pacejka ``lambda_mu`` has a different meaning and is not used
+    as an absolute coefficient in this simplified Endurance model.
+    """
+
+    friction_coefficient: float = 0.60    # ASSUMPTION, unvalidated tire grip
 
 
 @dataclass(frozen=True)
@@ -144,6 +156,7 @@ class SimulationConfig:
     speed_control_band_m_s: float = 0.25
     lookahead_m: float = 220.0
     vehicle: VehicleConfig = field(default_factory=VehicleConfig)
+    tire: TireConfig = field(default_factory=TireConfig)
     drivetrain: DrivetrainConfig = field(default_factory=DrivetrainConfig)
     motor: MotorConfig = field(default_factory=MotorConfig)
     battery: BatteryConfig = field(default_factory=BatteryConfig)
@@ -158,5 +171,7 @@ ASSUMPTIONS = (
     "SoC mínimo utilizável de 20% e margem energética de 20%.",
     "Pista plana, sem vento e sem frenagem regenerativa.",
     "Controle de condução determinístico com antecipação de curvas.",
+    "Coeficiente simplificado de aderência 0,60 é hipótese não validada.",
+    "Combinação longitudinal/lateral usa círculo de atrito simplificado.",
     "Sem limites de tensão/corrente de datasheet: essas verificações ficam pendentes.",
 )

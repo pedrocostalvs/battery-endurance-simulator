@@ -7,7 +7,7 @@ not subtracted here; the vehicle model applies it once in Newton's equation.
 
 from dataclasses import dataclass
 
-from config.parameters import BrakeConfig, VehicleConfig
+from config.parameters import BrakeConfig, TireConfig, VehicleConfig
 from .vehicle import VehicleModel
 
 
@@ -29,10 +29,12 @@ class BrakeModel:
         self,
         config: BrakeConfig,
         vehicle_config: VehicleConfig,
+        tire_config: TireConfig,
         vehicle_model: VehicleModel,
     ):
         self.config = config
         self.vehicle_config = vehicle_config
+        self.tire_config = tire_config
         self.vehicle_model = vehicle_model
 
     def apply(
@@ -57,8 +59,11 @@ class BrakeModel:
         commanded_force = total_disc_torque / vehicle.wheel_radius_m
 
         total_normal = self.vehicle_model.total_normal_load_n(speed_m_s)
-        adhesion_limit = self.vehicle_model.friction_circle_longitudinal_limit_n(
-            vehicle.tire_friction_coefficient, total_normal, lateral_force_n)
+        adhesion_limit = self.vehicle_model.combined_grip_longitudinal_limit_n(
+            self.tire_config.friction_coefficient,
+            total_normal,
+            lateral_force_n,
+        )
         effective_force = min(commanded_force, adhesion_limit)
 
         transfer = (vehicle.mass_kg * max(previous_deceleration_m_s2, 0.0)

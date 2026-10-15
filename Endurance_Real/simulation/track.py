@@ -3,7 +3,12 @@
 from dataclasses import dataclass
 from math import inf, sqrt
 
-from config.parameters import MotorConfig, TrackSegmentConfig, VehicleConfig
+from config.parameters import (
+    MotorConfig,
+    TireConfig,
+    TrackSegmentConfig,
+    VehicleConfig,
+)
 
 
 @dataclass(frozen=True)
@@ -20,6 +25,7 @@ class ReferenceTrack:
         self,
         segments: tuple[TrackSegmentConfig, ...],
         vehicle: VehicleConfig,
+        tire: TireConfig,
         motor: MotorConfig,
         final_drive_ratio: float,
     ):
@@ -27,6 +33,7 @@ class ReferenceTrack:
             raise ValueError("track segments must have positive length")
         self.segments = segments
         self.vehicle = vehicle
+        self.tire = tire
         self.motor = motor
         self.final_drive_ratio = final_drive_ratio
         cumulative = [0.0]
@@ -48,12 +55,12 @@ class ReferenceTrack:
             + cfg.lift_coefficient_rear * cfg.lift_area_rear_m2)
         denominator = (
             cfg.mass_kg / radius_m
-            - cfg.tire_friction_coefficient * aero_vertical_coefficient)
+            - self.tire.friction_coefficient * aero_vertical_coefficient)
         if denominator <= 0.0:
             lateral_limit = inf
         else:
             lateral_limit = sqrt(
-                cfg.tire_friction_coefficient * cfg.mass_kg
+                self.tire.friction_coefficient * cfg.mass_kg
                 * cfg.gravity_m_s2 / denominator)
         return min(lateral_limit, self.powertrain_speed_limit_m_s)
 

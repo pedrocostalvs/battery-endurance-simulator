@@ -15,7 +15,11 @@ ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY = ROOT.parent
 sys.path.insert(0, str(ROOT))
 
-from config.parameters import BatteryConfig, SimulationConfig  # noqa: E402
+from config.parameters import (  # noqa: E402
+    BatteryConfig,
+    SimulationConfig,
+    TireConfig,
+)
 from models.battery import BatteryModel  # noqa: E402
 from simulation.endurance import EnduranceSimulator  # noqa: E402
 from simulation.track import ReferenceTrack  # noqa: E402
@@ -123,6 +127,7 @@ class EnduranceRealTests(unittest.TestCase):
         track = ReferenceTrack(
             self.config.track_segments,
             self.config.vehicle,
+            self.config.tire,
             self.config.motor,
             self.config.drivetrain.final_drive_ratio,
         )
@@ -132,6 +137,61 @@ class EnduranceRealTests(unittest.TestCase):
         ])
         maximum_excess = float(np.max(self.results.speed_m_s - local_limits))
         self.assertLess(maximum_excess, 0.02)
+
+    def test_combined_grip_respects_normal_and_lateral_force(self):
+        normal = 1000.0
+        mu = self.config.tire.friction_coefficient
+        no_cornering = self.simulator.vehicle.combined_grip_longitudinal_limit_n(
+            mu, normal, 0.0)
+        at_lateral_limit = (
+            self.simulator.vehicle.combined_grip_longitudinal_limit_n(
+                mu, normal, mu * normal)
+        )
+        self.assertAlmostEqual(no_cornering, mu * normal)
+        self.assertAlmostEqual(at_lateral_limit, 0.0)
+
+    def test_slow_corner_limit_matches_configured_mu_equation(self):
+        track = self.simulator.track
+        index = next(
+            i for i, segment in enumerate(self.config.track_segments)
+            if segment.name == "Curva lenta"
+        )
+        radius = self.config.track_segments[index].radius_m
+        vehicle = self.config.vehicle
+        mu = self.config.tire.friction_coefficient
+        aero_vertical = 0.5 * vehicle.air_density_kg_m3 * (
+            vehicle.lift_coefficient_front * vehicle.lift_area_front_m2
+            + vehicle.lift_coefficient_rear * vehicle.lift_area_rear_m2
+        )
+        denominator = vehicle.mass_kg / radius - mu * aero_vertical
+        expected = np.sqrt(
+            mu * vehicle.mass_kg * vehicle.gravity_m_s2 / denominator)
+        self.assertAlmostEqual(
+            track.segment_speed_limits_m_s[index], expected, delta=1e-6)
+
+    def test_configured_mu_affects_traction_braking_and_corner_speed(self):
+        low = replace(self.config, tire=TireConfig(friction_coefficient=0.45),
+                      target_distance_m=300.0, maximum_time_s=120.0)
+        high = replace(self.config, tire=TireConfig(friction_coefficient=0.75),
+                       target_distance_m=300.0, maximum_time_s=120.0)
+        low_simulator = EnduranceSimulator(low)
+        high_simulator = EnduranceSimulator(high)
+        low_result = low_simulator.run()
+        high_result = high_simulator.run()
+        self.assertGreater(
+            float(np.max(high_result.drive_force_n)),
+            float(np.max(low_result.drive_force_n)),
+        )
+        low_brake = low_simulator.brake.apply(20.0, 0.0, 0.0)
+        high_brake = high_simulator.brake.apply(20.0, 0.0, 0.0)
+        self.assertGreater(
+            high_brake.effective_wheel_force_n,
+            low_brake.effective_wheel_force_n,
+        )
+        self.assertGreater(
+            high_simulator.track.segment_speed_limits_m_s[1],
+            low_simulator.track.segment_speed_limits_m_s[1],
+        )
 
     def test_relevant_limit_causes_explicit_termination(self):
         battery = replace(
@@ -154,13 +214,13 @@ class EnduranceRealTests(unittest.TestCase):
         self.assertTrue(np.any(self.results.brake_force_n > 0.0))
 
     def test_time_step_convergence(self):
-        coarse_config = replace(self.config, time_step_s=0.04)
-        coarse = EnduranceSimulator(coarse_config).run()
-        self.assertEqual(coarse.status, "completed")
+        fine_config = replace(self.config, time_step_s=0.01)
+        fine = EnduranceSimulator(fine_config).run()
+        self.assertEqual(fine.status, "completed")
         energy_relative_difference = abs(
-            coarse.energy_wh - self.results.energy_wh) / self.results.energy_wh
+            fine.energy_wh - self.results.energy_wh) / fine.energy_wh
         time_relative_difference = abs(
-            coarse.total_time_s - self.results.total_time_s) / self.results.total_time_s
+            fine.total_time_s - self.results.total_time_s) / fine.total_time_s
         self.assertLess(energy_relative_difference, 0.01)
         self.assertLess(time_relative_difference, 0.01)
 

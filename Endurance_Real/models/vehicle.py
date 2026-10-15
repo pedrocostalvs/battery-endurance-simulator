@@ -1,4 +1,4 @@
-"""Longitudinal resistance, load transfer and friction-circle limits."""
+"""Longitudinal resistance, load transfer and combined-grip limits."""
 
 from math import cos, sin, sqrt
 
@@ -51,11 +51,12 @@ class VehicleModel:
         return cfg.mass_kg * cfg.gravity_m_s2 + self.downforce_n(speed_m_s)
 
     @staticmethod
-    def friction_circle_longitudinal_limit_n(
+    def combined_grip_longitudinal_limit_n(
         friction_coefficient: float,
         normal_load_n: float,
         lateral_force_n: float,
     ) -> float:
+        """Available Fx from an isotropic friction-circle approximation."""
         total_limit = max(friction_coefficient * normal_load_n, 0.0)
         return sqrt(max(total_limit**2 - lateral_force_n**2, 0.0))
 

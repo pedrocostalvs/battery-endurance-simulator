@@ -18,10 +18,12 @@ class EnduranceSimulator:
             config.drivetrain, config.vehicle, config.motor)
         self.motor = MotorModel(config.motor)
         self.battery = BatteryModel(config.battery)
-        self.brake = BrakeModel(config.brake, config.vehicle, self.vehicle)
+        self.brake = BrakeModel(
+            config.brake, config.vehicle, config.tire, self.vehicle)
         self.track = ReferenceTrack(
             config.track_segments,
             config.vehicle,
+            config.tire,
             config.motor,
             config.drivetrain.final_drive_ratio,
         )
@@ -44,18 +46,17 @@ class EnduranceSimulator:
             0.1,
         )
 
-        must_brake = speed_m_s > target_speed + cfg.speed_control_band_m_s
+        must_brake = speed_m_s > target_speed + 1e-9
         for distance_ahead, limit, _name in self.track.constraints_ahead(
             distance_m, cfg.lookahead_m
         ):
-            if speed_m_s <= limit:
-                continue
-            required_distance = (
-                (speed_m_s**2 - limit**2) / (2.0 * planning_deceleration))
-            if distance_ahead <= required_distance + cfg.braking_distance_buffer_m:
+            usable_distance = max(
+                distance_ahead - cfg.braking_distance_buffer_m, 0.0)
+            approach_speed = sqrt(
+                limit**2 + 2.0 * planning_deceleration * usable_distance)
+            target_speed = min(target_speed, approach_speed)
+            if speed_m_s > approach_speed + 1e-9:
                 must_brake = True
-                target_speed = min(target_speed, limit)
-                break
 
         if must_brake:
             return 0.0, 1.0, target_speed
@@ -134,8 +135,8 @@ class EnduranceSimulator:
             lateral_rear = (
                 lateral_force * rear_normal / total_normal
                 if total_normal > 0.0 else 0.0)
-            traction_limit = self.vehicle.friction_circle_longitudinal_limit_n(
-                cfg.vehicle.tire_friction_coefficient,
+            traction_limit = self.vehicle.combined_grip_longitudinal_limit_n(
+                cfg.tire.friction_coefficient,
                 rear_normal,
                 lateral_rear,
             )
