@@ -25,6 +25,12 @@ class EnduranceResults:
     brake_force_n: np.ndarray
     lateral_force_n: np.ndarray
     speed_limit_m_s: np.ndarray
+    target_speed_m_s: np.ndarray
+    throttle_command: np.ndarray
+    brake_command: np.ndarray
+    controller_state: np.ndarray
+    distance_to_corner_m: np.ndarray
+    estimated_braking_distance_m: np.ndarray
     completed_laps: int
     lap_length_m: float
     nominal_pack_energy_wh: float
@@ -85,5 +91,11 @@ class EnduranceResults:
             brake_force_n=self.brake_force_n,
             lateral_force_n=self.lateral_force_n,
             speed_limit_m_s=self.speed_limit_m_s,
+            target_speed_m_s=self.target_speed_m_s,
+            throttle_command=self.throttle_command,
+            brake_command=self.brake_command,
+            controller_state=self.controller_state,
+            distance_to_corner_m=self.distance_to_corner_m,
+            estimated_braking_distance_m=self.estimated_braking_distance_m,
         )
         return path

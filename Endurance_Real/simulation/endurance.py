@@ -27,13 +27,42 @@ class EnduranceSimulator:
             config.motor,
             config.drivetrain.final_drive_ratio,
         )
+        self._driver_state = "ACCELERATING"
+        self._previous_throttle = 0.0
+        self._corner_target: dict[str, float | int | str] | None = None
+
+    def _maximum_available_drive_force(
+        self, speed_m_s: float, previous_acceleration: float,
+        lateral_force_n: float,
+    ) -> float:
+        motor_speed = self.drivetrain.motor_speed_rad_s(speed_m_s)
+        maximum = self.motor.maximum_drive_torque(motor_speed)
+        ideal_force = self.drivetrain.wheel_force_from_motor_torque(
+            maximum.torque_nm, motor_speed)
+        rear_normal = self.vehicle.rear_normal_load_n(
+            previous_acceleration, speed_m_s)
+        total_normal = self.vehicle.total_normal_load_n(speed_m_s)
+        lateral_rear = (
+            lateral_force_n * rear_normal / total_normal
+            if total_normal > 0.0 else 0.0)
+        tire_limit = self.vehicle.combined_grip_longitudinal_limit_n(
+            self.config.tire.friction_coefficient,
+            rear_normal,
+            lateral_rear,
+        )
+        return min(ideal_force, tire_limit)
 
     def _driver_commands(
         self, distance_m: float, speed_m_s: float, previous_acceleration: float
-    ) -> tuple[float, float, float]:
+    ) -> tuple[float, float, float, str, float, float]:
         cfg = self.config
         track_state = self.track.state_at(distance_m)
-        target_speed = track_state.local_speed_limit_m_s
+        straight_target = (
+            cfg.straight_speed_target_fraction
+            * self.track.powertrain_speed_limit_m_s)
+        local_target = (
+            straight_target if track_state.radius_m is None
+            else track_state.local_speed_limit_m_s)
 
         lateral = self.vehicle.lateral_force_n(speed_m_s, track_state.radius_m)
         brake_capability = self.brake.apply(
@@ -45,34 +74,117 @@ class EnduranceSimulator:
             / self.drivetrain.equivalent_mass_kg,
             0.1,
         )
-
-        must_brake = speed_m_s > target_speed + 1e-9
-        for distance_ahead, limit, _name in self.track.constraints_ahead(
-            distance_m, cfg.lookahead_m
+        if (
+            self._corner_target is not None
+            and distance_m >= float(self._corner_target["exit_distance_m"]) - 1e-9
         ):
-            usable_distance = max(
-                distance_ahead - cfg.braking_distance_buffer_m, 0.0)
-            approach_speed = sqrt(
-                limit**2 + 2.0 * planning_deceleration * usable_distance)
-            target_speed = min(target_speed, approach_speed)
-            if speed_m_s > approach_speed + 1e-9:
-                must_brake = True
+            self._corner_target = None
+            self._driver_state = "ACCELERATING"
 
-        if must_brake:
-            return 0.0, 1.0, target_speed
+        if self._corner_target is None:
+            segment_by_name = {
+                segment.name: (index, segment)
+                for index, segment in enumerate(cfg.track_segments)
+            }
+            for distance_ahead, limit, name in self.track.constraints_ahead(
+                distance_m, cfg.lookahead_m
+            ):
+                index, segment = segment_by_name[name]
+                if segment.radius_m is None or speed_m_s <= limit:
+                    continue
+                braking_distance = (
+                    (speed_m_s**2 - limit**2)
+                    / (2.0 * planning_deceleration)
+                )
+                release_distance = (
+                    speed_m_s * self._previous_throttle
+                    / cfg.throttle_rate_limit_per_s
+                )
+                if distance_ahead <= (
+                    braking_distance + release_distance
+                    + cfg.braking_distance_buffer_m
+                ):
+                    entry = distance_m + distance_ahead
+                    self._corner_target = {
+                        "segment_index": index,
+                        "name": name,
+                        "speed_limit_m_s": limit,
+                        "entry_distance_m": entry,
+                        "exit_distance_m": entry + segment.length_m,
+                    }
+                    self._driver_state = "BRAKING"
+                    break
 
-        motor_speed = self.drivetrain.motor_speed_rad_s(speed_m_s)
-        maximum = self.motor.maximum_drive_torque(motor_speed)
-        maximum_force = self.drivetrain.wheel_force_from_motor_torque(
-            maximum.torque_nm, motor_speed)
+        distance_to_corner = -1.0
+        braking_distance = 0.0
+        target_speed = local_target
+        if self._corner_target is not None:
+            target_speed = float(self._corner_target["speed_limit_m_s"])
+            distance_to_corner = max(
+                float(self._corner_target["entry_distance_m"]) - distance_m,
+                0.0,
+            )
+            if speed_m_s > target_speed:
+                braking_distance = (
+                    (speed_m_s**2 - target_speed**2)
+                    / (2.0 * planning_deceleration)
+                )
+
+        maximum_force = self._maximum_available_drive_force(
+            speed_m_s, previous_acceleration, lateral)
         resistance = self.vehicle.total_resistance_n(speed_m_s)
-        if speed_m_s < target_speed - cfg.speed_control_band_m_s:
-            throttle = 1.0
-        elif maximum_force > 0.0:
-            throttle = min(max(resistance / maximum_force, 0.0), 1.0)
+        if self._driver_state == "BRAKING":
+            desired_throttle = 0.0
         else:
-            throttle = 0.0
-        return throttle, 0.0, target_speed
+            if maximum_force > 0.0:
+                feedforward = resistance / maximum_force
+                proportional = (
+                    cfg.driver_speed_kp * (target_speed - speed_m_s)
+                    / self.track.powertrain_speed_limit_m_s
+                )
+                desired_throttle = min(max(feedforward + proportional, 0.0), 1.0)
+                if (
+                    self._corner_target is not None
+                    and self._driver_state == "CRUISING"
+                ):
+                    # After one braking event, hold the corner speed with the
+                    # resistive-force feedforward instead of reaccelerating
+                    # into a second brake event for the same corner.
+                    desired_throttle = feedforward
+            else:
+                desired_throttle = 0.0
+
+        maximum_change = cfg.throttle_rate_limit_per_s * cfg.time_step_s
+        throttle = min(
+            max(
+                desired_throttle,
+                self._previous_throttle - maximum_change,
+            ),
+            self._previous_throttle + maximum_change,
+        )
+        throttle = min(max(throttle, 0.0), 1.0)
+        self._previous_throttle = throttle
+
+        brake_fraction = 0.0
+        if self._driver_state == "BRAKING" and throttle <= 1e-12:
+            brake_fraction = 1.0
+            if speed_m_s <= target_speed:
+                self._driver_state = "CRUISING"
+                brake_fraction = 0.0
+        elif self._driver_state != "BRAKING":
+            if speed_m_s < target_speed - cfg.speed_control_band_m_s:
+                self._driver_state = "ACCELERATING"
+            else:
+                self._driver_state = "CRUISING"
+
+        return (
+            throttle,
+            brake_fraction,
+            target_speed,
+            self._driver_state,
+            distance_to_corner,
+            braking_distance,
+        )
 
     @staticmethod
     def _time_to_distance(
@@ -105,7 +217,10 @@ class EnduranceSimulator:
             "time", "distance", "speed", "acceleration", "power", "current",
             "voltage", "soc", "energy", "loss", "torque", "drive_force",
             "brake_force", "lateral_force", "speed_limit",
+            "target_speed", "throttle", "brake_command",
+            "distance_to_corner", "braking_distance",
         )}
+        controller_states: list[str] = []
 
         maximum_steps = int(ceil(cfg.maximum_time_s / cfg.time_step_s)) + 1
         for _step in range(maximum_steps):
@@ -121,14 +236,20 @@ class EnduranceSimulator:
 
             track_state = self.track.state_at(distance)
             lateral_force = self.vehicle.lateral_force_n(speed, track_state.radius_m)
-            throttle, brake_fraction, target_speed = self._driver_commands(
+            (
+                throttle,
+                brake_fraction,
+                target_speed,
+                controller_state,
+                distance_to_corner,
+                braking_distance,
+            ) = self._driver_commands(
                 distance, speed, previous_acceleration)
             motor_speed = self.drivetrain.motor_speed_rad_s(speed)
             motor_maximum = self.motor.maximum_drive_torque(motor_speed)
 
-            requested_torque = throttle * motor_maximum.torque_nm
             ideal_drive_force = self.drivetrain.wheel_force_from_motor_torque(
-                requested_torque, motor_speed)
+                motor_maximum.torque_nm, motor_speed)
             rear_normal = self.vehicle.rear_normal_load_n(
                 previous_acceleration, speed)
             total_normal = self.vehicle.total_normal_load_n(speed)
@@ -140,7 +261,7 @@ class EnduranceSimulator:
                 rear_normal,
                 lateral_rear,
             )
-            drive_force = min(ideal_drive_force, traction_limit)
+            drive_force = throttle * min(ideal_drive_force, traction_limit)
 
             brake_output = self.brake.apply(
                 speed, lateral_force, max(-previous_acceleration, 0.0), brake_fraction)
@@ -221,7 +342,13 @@ class EnduranceSimulator:
             history["drive_force"].append(drive_force)
             history["brake_force"].append(brake_force)
             history["lateral_force"].append(lateral_force)
-            history["speed_limit"].append(target_speed)
+            history["speed_limit"].append(track_state.local_speed_limit_m_s)
+            history["target_speed"].append(target_speed)
+            history["throttle"].append(throttle)
+            history["brake_command"].append(brake_fraction)
+            history["distance_to_corner"].append(distance_to_corner)
+            history["braking_distance"].append(braking_distance)
+            controller_states.append(controller_state)
         else:
             status, reason = "interrupted", "maximum_step_count_reached"
 
@@ -253,6 +380,12 @@ class EnduranceSimulator:
             brake_force_n=arrays["brake_force"],
             lateral_force_n=arrays["lateral_force"],
             speed_limit_m_s=arrays["speed_limit"],
+            target_speed_m_s=arrays["target_speed"],
+            throttle_command=arrays["throttle"],
+            brake_command=arrays["brake_command"],
+            controller_state=np.asarray(controller_states, dtype="U16"),
+            distance_to_corner_m=arrays["distance_to_corner"],
+            estimated_braking_distance_m=arrays["braking_distance"],
             completed_laps=floor(distance / self.track.lap_length_m + 1e-10),
             lap_length_m=self.track.lap_length_m,
             nominal_pack_energy_wh=cfg.battery.nominal_energy_wh,

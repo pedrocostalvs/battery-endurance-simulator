@@ -155,6 +155,10 @@ class SimulationConfig:
     braking_distance_buffer_m: float = 4.0 # ASSUMPTION
     speed_control_band_m_s: float = 0.25
     lookahead_m: float = 220.0
+    straight_speed_target_fraction: float = 0.99  # ASSUMPTION
+    driver_speed_kp: float = 2.0             # ASSUMPTION, uncalibrated
+    brake_release_band_m_s: float = 0.10     # ASSUMPTION
+    throttle_rate_limit_per_s: float = 3.0   # ASSUMPTION
     vehicle: VehicleConfig = field(default_factory=VehicleConfig)
     tire: TireConfig = field(default_factory=TireConfig)
     drivetrain: DrivetrainConfig = field(default_factory=DrivetrainConfig)
@@ -171,6 +175,8 @@ ASSUMPTIONS = (
     "SoC mínimo utilizável de 20% e margem energética de 20%.",
     "Pista plana, sem vento e sem frenagem regenerativa.",
     "Controle de condução determinístico com antecipação de curvas.",
+    "Controle proporcional Kp=2,0 e taxa do acelerador=3,0 1/s não calibrados.",
+    "Alvo de reta em 99% do limite cinemático do powertrain.",
     "Coeficiente simplificado de aderência 0,60 é hipótese não validada.",
     "Combinação longitudinal/lateral usa círculo de atrito simplificado.",
     "Sem limites de tensão/corrente de datasheet: essas verificações ficam pendentes.",

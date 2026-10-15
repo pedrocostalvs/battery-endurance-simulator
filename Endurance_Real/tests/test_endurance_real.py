@@ -112,6 +112,9 @@ class EnduranceRealTests(unittest.TestCase):
             result.acceleration_m_s2, result.electrical_power_w,
             result.battery_current_a, result.battery_voltage_v, result.soc,
             result.cumulative_energy_wh,
+            result.target_speed_m_s, result.throttle_command,
+            result.brake_command, result.distance_to_corner_m,
+            result.estimated_braking_distance_m,
         ):
             self.assertTrue(np.all(np.isfinite(values)))
 
@@ -212,6 +215,35 @@ class EnduranceRealTests(unittest.TestCase):
         self.assertLess(float(np.min(self.results.acceleration_m_s2)), 0.0)
         self.assertTrue(np.any(self.results.drive_force_n > 0.0))
         self.assertTrue(np.any(self.results.brake_force_n > 0.0))
+
+    def test_driver_state_and_throttle_rate_limit(self):
+        self.assertTrue(set(self.results.controller_state).issubset({
+            "ACCELERATING", "CRUISING", "BRAKING",
+        }))
+        rate = np.abs(np.diff(self.results.throttle_command)) / self.config.time_step_s
+        self.assertLessEqual(
+            float(np.max(rate)), self.config.throttle_rate_limit_per_s + 1e-10)
+        self.assertTrue(np.all(self.results.throttle_command >= 0.0))
+        self.assertTrue(np.all(self.results.throttle_command <= 1.0))
+        self.assertTrue(np.all(self.results.brake_command >= 0.0))
+        self.assertTrue(np.all(self.results.brake_command <= 1.0))
+
+    def test_command_inversions_are_limited_per_lap(self):
+        command = np.where(
+            self.results.brake_command > 1e-9,
+            -1,
+            np.where(self.results.throttle_command > 1e-6, 1, 0),
+        )
+        inversions = []
+        for lap in range(22):
+            mask = np.minimum(
+                (self.results.distance_m / self.results.lap_length_m).astype(int),
+                21,
+            ) == lap
+            active = command[mask]
+            active = active[active != 0]
+            inversions.append(int(np.sum(active[1:] != active[:-1])))
+        self.assertLessEqual(max(inversions), 8)
 
     def test_time_step_convergence(self):
         fine_config = replace(self.config, time_step_s=0.01)
