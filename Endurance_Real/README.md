@@ -1,150 +1,213 @@
 # Simulador físico de Endurance — Xangô e-Racing
 
-Implementação independente para estudar o comportamento longitudinal e elétrico
-do veículo ao longo de 22 km. O código original do repositório permanece intacto.
+Modelo longitudinal e energético preliminar para um Endurance de 22 km. O
+simulador não foi validado experimentalmente e o percurso de referência não é
+uma pista real de competição. O código original em `src/` permanece separado e
+é usado apenas como fonte rastreável de alguns parâmetros e equações.
 
-Este modelo é preliminar e **não foi validado experimentalmente**. O percurso é
-hipotético e não representa uma pista oficial.
+## Execução
 
-## Execução pelo VS Code
+No Windows, abra `Endurance_Real/run_endurance.py`, selecione o interpretador
+`.venv/Scripts/python.exe` no VS Code e clique em **Run Python File (▶)**.
 
-1. Abra `Endurance_Real/run_endurance.py`.
-2. Selecione o interpretador `.venv/Scripts/python.exe` no VS Code.
-3. Clique em **Run Python File (▶)**.
-
-O arquivo resolve seus próprios imports a partir da localização física, portanto
-não exige alteração de `PYTHONPATH` nem mudança do diretório do terminal.
-
-Pelo PowerShell, a execução equivalente é:
+Execução equivalente no PowerShell:
 
 ```powershell
 .\.venv\Scripts\python.exe Endurance_Real\run_endurance.py
 ```
 
-## Organização
+Linux/macOS, com um ambiente virtual equivalente:
 
-- `config/parameters.py`: dados conhecidos e hipóteses configuráveis.
-- `models/`: bateria, motor, transmissão, veículo e frenagem adaptados.
-- `simulation/track.py`: pista de referência e limites de velocidade em curva.
-- `simulation/endurance.py`: estratégia de condução e integração acoplada.
-- `simulation/results.py`: resultados e exportação numérica.
-- `visualization/plots.py`: dashboard interativo 4×2 e exportações PNG.
-- `tests/`: testes físicos, numéricos e de execução.
-- `results/`: gráficos e dados gerados.
+```bash
+./.venv/bin/python Endurance_Real/run_endurance.py
+```
 
-## Dashboard
+Ao final, o terminal mostra os resultados sem imprimir caminhos de arquivos e
+uma única janela Matplotlib apresenta o dashboard interativo. Para automação:
 
-Ao fim da execução pelo VS Code, uma única janela interativa apresenta oito
-painéis. A volta 2 é usada como referência por padrão para evitar o transiente
-da largada; energia, tempo e SoC continuam apresentados para as 22 voltas. As
-faixas laranja identificam segmentos classificados como curvas.
+```powershell
+$env:ENDURANCE_NO_SHOW = "1"
+.\.venv\Scripts\python.exe Endurance_Real\run_endurance.py
+```
 
-![Dashboard real do cenário de referência](docs/img/endurance_dashboard.png)
+Essa variável desativa somente a janela. PNGs e NPZ continuam sendo gerados.
 
-O diagrama g-g é um diagnóstico do modelo longitudinal com aceleração lateral
-centrípeta inferida nos segmentos curvos. Ele não substitui validação de uma
-dinâmica lateral completa ou de um modelo de pneu combinado experimental.
+## Arquitetura
 
-## Equações principais
+- `config/parameters.py`: dataclasses com dados conhecidos e hipóteses.
+- `models/vehicle.py`: resistências, cargas normais e aderência combinada.
+- `models/drivetrain.py`: transmissão e massa equivalente.
+- `models/motor.py`: envelope quase-estático do PMSM.
+- `models/battery.py`: tensão, corrente, SoC e perdas resistivas.
+- `models/braking.py`: cadeia hidráulica e força efetiva de frenagem.
+- `simulation/track.py`: sequência longitudinal de segmentos e limites locais.
+- `simulation/endurance.py`: piloto virtual e integração no tempo.
+- `simulation/results.py`: históricos, resumo por volta e NPZ.
+- `visualization/plots.py`: dashboard 4×2 e nove PNGs.
+- `tests/`: verificações físicas, numéricas e de execução.
+- `results/`: relatórios e artefatos reproduzíveis.
 
-Dinâmica longitudinal com massa equivalente:
+## Dinâmica longitudinal
 
 ```text
 m_eq dv/dt = F_tração - F_freio - F_aero - F_rolamento - F_inclinação
 F_aero = 0,5 ρ Cd A v²
-F_rolamento = Crr(v) m g cos(θ)
+F_rolamento = Crr (1 + |v|/v_ref) m g cos(θ)
 F_inclinação = m g sin(θ)
+F_downforce = 0,5 ρ (Cl_f A_f + Cl_r A_r) v²
 ```
 
-A massa equivalente soma a massa translacional e as inércias rotacionais
-convertidas por equivalência de energia cinética. Nenhuma inércia é contada em
-um segundo corpo dinâmico.
+A massa equivalente soma massa translacional e inércias rotacionais uma única
+vez. O fator de forma `0,80` da inércia das rodas é uma hipótese configurável;
+não é um valor medido. A referência de velocidade do rolamento é `150 m/s`,
+preservando a unidade do modelo de origem.
 
-O limite longitudinal disponível usa círculo de atrito:
+## Pneus e aderência combinada
+
+Tração, frenagem e limites de curva usam uma única fonte:
+`TireConfig.friction_coefficient`. O valor atual `0,60` é uma hipótese do
+cenário, não o fator `lambda_mu` da Magic Formula original.
 
 ```text
-F_long,max = sqrt[(μ Fz)² - F_lateral²]
-F_lateral = m v²/R
+Fx,max = sqrt[(μ Fz)² - Fy²]
+Fy = m v²/R
+v_curva = sqrt[μ m g / (m/R - μ 0,5ρ(Cl_f A_f + Cl_r A_r))]
 ```
 
-O limite de curva é obtido de `m v²/R <= μ(mg + F_downforce)`. A estratégia de
-condução olha à frente e inicia a frenagem quando a distância até uma curva é
-menor que a distância cinemática necessária. A velocidade não é prescrita.
+O círculo de atrito é uma aproximação isotrópica. Não há parâmetros laterais
+experimentais, slip angle, transientes de pneu ou Magic Formula combinada. O
+downforce participa de `Fz`. A tração usa a carga traseira com transferência
+longitudinal; a frenagem ainda usa um limite agregado do veículo.
 
-Motor e transmissão:
+## Motor, transmissão e potência
 
 ```text
 T_max = 1,5 p λm iq,max
 P_mec,max = P_DC,max η_motor η_inversor
 F_roda = (T_motor - kf ωmotor) N ηtrans / rroda
+P_DC = P_motor / (η_motor η_inversor)
 ```
 
-Bateria, na raiz estável de alta tensão:
+As eficiências são constantes. Não existem mapas dependentes de rotação,
+torque, tensão ou temperatura. O limite de 80 kW é configuração do projeto e
+não uma declaração de conformidade regulamentar.
+
+## Piloto virtual
+
+O controlador possui estados `ACCELERATING`, `CRUISING` e `BRAKING`.
+
+- Nas retas, o alvo é 99% do limite cinemático do powertrain.
+- O acelerador usa feedforward de resistência e termo proporcional.
+- A taxa de variação do acelerador é limitada.
+- O segmento-alvo fica travado durante cada evento de curva.
+- O piloto freia antes da curva e não executa *trail braking*.
+- Frenagem regenerativa permanece desabilitada.
+
+Por isso, o diagrama g-g tende a mostrar grupos separados de frenagem
+longitudinal e aceleração lateral. Isso é consequência da estratégia e da
+simplificação do modelo, não evidência experimental do envelope do pneu.
+
+## Bateria e energia
+
+O modelo avalia uma formulação Modified Shepherd simplificada por célula e
+escala tensão e resistência para o pack 144s5p:
 
 ```text
-Vterminal = Vaberto(SoC, carga acumulada) - Req I
-PDC = Vterminal I
-I = 2PDC / [Vaberto + sqrt(Vaberto² - 4 Req PDC)]
-dSoC/dt = -I / (Qpack 3600)
-Pperda = I² Req
+V_terminal = V_aberto(SoC, carga acumulada) - R_eq I
+P_DC = V_terminal I
+I = 2 P_DC / [V_aberto + sqrt(V_aberto² - 4 R_eq P_DC)]
+dSoC/dt = -I / (Q_pack 3600)
+P_Joule = I² R_eq
 ```
 
-Não há regeneração. Durante frenagem, a potência elétrica de tração é zero.
+Energia nos terminais é `∫V_terminal I dt`. A soma dessa energia com
+`∫I²R_eq dt` fornece somente uma estimativa da energia interna retirada sob o
+modelo resistivo adotado; não é medição exata de energia química. O SoC deriva
+da carga integrada, e não de uma proporção fixa entre Wh e capacidade nominal.
 
-## Origem dos dados
+## Pista e voltas
 
-Vieram da configuração existente: massa 240 kg, raio 0,26 m, Cd 0,7789, área
-frontal 0,68 m², Crr 0,015, transmissão 5:1 com eficiências 0,98 e 0,97,
-parâmetros do PMSM, limite configurado de 323 A de fase, referência de rotação
-575,96 rad/s, pack genérico 144s5p e parâmetros hidráulicos de `Brake.py`.
+A “volta” de 1 km é apenas uma sequência de retas e raios usada pelo modelo
+longitudinal. Ela não possui coordenadas 2D nem fechamento geométrico validado;
+a soma angular informada dos segmentos é aproximadamente 722,7°, não 360°.
+Consequentemente, o simulador não desenha um mapa da pista.
 
-Os modelos adaptados preservam a origem conceitual dos módulos existentes. A
-frenagem nova separa força no pedal, pressão, força normal das pastilhas, torque
-nos discos, força nas rodas e aderência. A resistência ao rolamento é aplicada
-somente pela dinâmica do veículo, evitando dupla contagem.
+As voltas 2–22 são quase periódicas. A primeira inclui a largada e tem tempo e
+energia diferentes. Ao longo das voltas seguintes, a queda de SoC altera a OCV,
+a tensão terminal e as perdas, embora o cenário atual não modele temperatura.
 
-## Hipóteses configuráveis
+## Dashboard e exportações
 
-- pista plana de referência com oito segmentos e uma volta de 1 km;
-- raios das curvas do cenário de referência;
-- eficiência constante do motor de 90% e inversor de 95%;
-- SoC mínimo utilizável de 20%;
-- margem energética de 20%;
-- passo de integração de 0,02 s;
-- estratégia simples de aceleração/manutenção/frenagem;
-- balanço hidráulico dianteiro de 60%.
+O dashboard usa a volta 2 como referência local e apresenta:
 
-## Limitações
+1. velocidade e limite local;
+2. potência DC;
+3. forças longitudinais;
+4. tensão e corrente;
+5. energia e tempo por volta;
+6. SoC final por volta;
+7. diagrama g-g simplificado;
+8. potência DC por velocidade.
 
-- Não há telemetria ou geometria de pista real.
-- Não há datasheet identificando a célula genérica.
-- Tensões mínima/máxima e correntes contínua/de pico permanecem pendentes.
-- Não há mapas de eficiência, dinâmica térmica ou degradação do pack.
-- O pneu é representado pelo coeficiente de atrito e círculo de atrito, não pela
-  Magic Formula completa combinada longitudinal/lateral.
-- O motor é quase-estático; não há PI de corrente nem chaveamento do inversor.
-- O limite de 80 kW é um parâmetro existente do projeto, não uma afirmação de
-  conformidade regulamentar.
+![Dashboard do cenário executado](docs/img/endurance_dashboard.png)
 
-## Substituição por pista real
+O diretório `results/` recebe o dashboard, oito painéis individuais e
+`endurance_results.npz`. O NPZ inclui estados do piloto, metadados de voltas e
+segmentos, forças e históricos elétricos.
 
-Edite `reference_track_segments()` em `config/parameters.py` ou construa uma
-tupla de `TrackSegmentConfig` com comprimentos e raios medidos. Uma evolução
-futura pode implementar outro provedor com a mesma interface de `ReferenceTrack`
-para ler curvatura em função da distância.
+## Parâmetros conhecidos e hipóteses
+
+Dados preservados do projeto incluem massa de 240 kg, raio de roda de 0,26 m,
+Cd 0,7789, área frontal 0,68 m², relação 5:1, eficiências mecânicas 0,98 e
+0,97, parâmetros do PMSM e configuração genérica 144s5p.
+
+Principais `ASSUMPTIONs` configuráveis:
+
+| Hipótese | Valor atual |
+|---|---:|
+| Percurso longitudinal | 1 km repetido até 22 km |
+| μ simplificado | 0,60 |
+| Eficiência do motor | 90% |
+| Eficiência do inversor | 95% |
+| Margem do alvo de reta | 99% |
+| Ganho proporcional do piloto | 2,0 |
+| Limite de taxa do acelerador | 3,0 s⁻¹ |
+| Margem energética | 20% |
+| SoC mínimo utilizável | 20% |
+| Passo de integração | 0,02 s |
+| Fator de inércia das rodas | 0,80 |
+
+## Uso para dimensionamento
+
+O modelo pode apoiar comparações preliminares de energia nos terminais,
+potência DC, corrente, consumo específico e influência de hipóteses. Ele não é
+suficiente para aprovar um acumulador: faltam tensão mínima/máxima e corrente
+contínua/de pico da célula, limites térmicos, envelhecimento, curva OCV×SoC,
+resistência em função de SoC/temperatura, mapas de eficiência, telemetria real e
+requisitos regulamentares aplicáveis.
 
 ## Testes
 
+Windows:
+
 ```powershell
+$env:MPLBACKEND = "Agg"
 .\.venv\Scripts\python.exe -m unittest discover -s Endurance_Real\tests -v
 ```
 
-Os testes verificam unidades e condições iniciais, potência DC, monotonicidade
-de SoC e energia, frenagem limitada por aderência, velocidade constante,
-aceleração/frenagem, término exato, convergência de passo e geração de gráficos.
+Linux/macOS:
 
-## Créditos
+```bash
+MPLBACKEND=Agg ./.venv/bin/python -m unittest discover -s Endurance_Real/tests -v
+```
 
-Projeto relacionado ao Powertrain da equipe Xangô e-Racing. Os parâmetros e as
-equações adaptadas têm como base os modelos existentes no repositório; a autoria
-e os créditos desses modelos são preservados.
+Os testes cobrem aderência, limites de curva, potência DC, SoC, controlador,
+inversões de comando, convergência temporal, distância final, resumos por
+volta, NPZ, dashboard e execução direta.
+
+## Créditos e publicação
+
+Projeto relacionado ao Powertrain da equipe Xangô e-Racing. Os parâmetros e
+equações adaptados preservam os créditos dos modelos originais do repositório.
+Nenhuma licença nova é criada aqui. Licença, publicação e permissões sobre os
+códigos originais dependem de decisão da equipe.

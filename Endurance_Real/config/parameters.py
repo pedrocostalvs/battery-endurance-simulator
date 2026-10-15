@@ -52,6 +52,7 @@ class DrivetrainConfig:
     differential_inertia_kg_m2: float = 0.012
     motor_sprocket_inertia_kg_m2: float = 0.0002
     crown_inertia_kg_m2: float = 0.0015
+    wheel_inertia_shape_factor: float = 0.80  # ASSUMPTION, empirical factor
 
 
 @dataclass(frozen=True)

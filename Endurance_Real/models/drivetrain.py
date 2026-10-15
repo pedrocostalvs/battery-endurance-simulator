@@ -40,7 +40,9 @@ class DrivetrainModel:
         """Translational mass plus rotational terms, counted exactly once."""
         r = self.vehicle.wheel_radius_m
         ratio = self.config.final_drive_ratio
-        wheel_inertia = 4.0 * 0.80 * self.vehicle.wheel_mass_kg * r**2
+        wheel_inertia = (
+            4.0 * self.config.wheel_inertia_shape_factor
+            * self.vehicle.wheel_mass_kg * r**2)
         slow_inertia = (
             wheel_inertia
             + self.vehicle.driven_wheels * self.config.axle_inertia_kg_m2
