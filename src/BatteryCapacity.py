@@ -4,6 +4,7 @@ from Models import BatteryPack, Tire, Transmission, Motor, Vehicle, Pedal
 from Simulation.Simulation import Simulation 
 from Brake import BrakeSystem
 from config.battery_config import BATTERY_PARAMS
+from visualization.energy_plots import plot_sprint_energy
 
 
 
@@ -122,6 +123,7 @@ sim.simulate()
 power = sim.battery_voltage_hist * sim.battery_current_hist
 energy = np.trapezoid(power,sim.tempo)
 Wh = energy / 3600
+energy_figure, sprint_energy = plot_sprint_energy(sim)
 
 print(f'Energia consumida na aceleração: {Wh:.2f} Wh')
 

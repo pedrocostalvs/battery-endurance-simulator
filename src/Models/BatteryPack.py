@@ -1,4 +1,21 @@
+from dataclasses import dataclass
+
 import numpy as np
+
+
+@dataclass(frozen=True)
+class BatteryPowerSolution:
+    """Operating point that closes the battery-side DC power balance."""
+
+    requested_power: float
+    delivered_power: float
+    current: float
+    voltage: float
+    max_available_power: float
+    power_limited: bool
+    residual: float
+
+
 class BatteryPack:
     """A Battery Pack object based on a simplified Modified Shepherd model.
 
@@ -220,6 +237,112 @@ class BatteryPack:
             Vt = self.E0 - self.R * i_cell_abs - term_K_charge - term_carga + term_exp
 
         return Vt * self.n_serie
+
+    def calcular_resistencia_equivalente(self):
+        """Return the equivalent pack resistance for the current cell model."""
+        return self.n_serie * self.R / self.n_paralelo
+
+    def resolver_potencia_descarga(self, potencia, soc, Iast, tempo_acumulado):
+        """Solve the implicit DC discharge power balance analytically.
+
+        For the current discharge model, terminal voltage is affine in pack
+        current: ``V = V0 - R_eq * I``.  The method selects the high-voltage,
+        low-current root of ``P = V * I`` using a numerically stable formula.
+
+        If requested power exceeds the mathematical maximum, the returned
+        solution describes the maximum-power point and sets ``power_limited``.
+        The caller must not continue applying the incompatible requested
+        mechanical power.
+
+        Closing this battery-side DC balance does not validate the complete
+        motor/inverter energy balance, whose requested power is still based on
+        an approximate drivetrain efficiency in ``Simulation``.
+        """
+        values = {
+            'potencia': potencia,
+            'soc': soc,
+            'Iast': Iast,
+            'tempo_acumulado': tempo_acumulado,
+        }
+        for name, value in values.items():
+            if not np.isfinite(value):
+                raise ValueError(f"{name} must be finite.")
+
+        potencia = float(potencia)
+        soc = float(soc)
+        Iast = float(Iast)
+        tempo_acumulado = float(tempo_acumulado)
+
+        if potencia < 0.0:
+            raise ValueError("potencia must be non-negative for discharge.")
+        if not 0.0 < soc <= 1.0:
+            raise ValueError("soc must be in the interval (0, 1].")
+
+        voltage_open = float(
+            self.calcular_tensao(0.0, soc, Iast, tempo_acumulado)
+        )
+        if not np.isfinite(voltage_open) or voltage_open <= 0.0:
+            raise ValueError("Open-circuit voltage must be finite and positive.")
+
+        resistance = float(self.calcular_resistencia_equivalente())
+        if not np.isfinite(resistance) or resistance < 0.0:
+            raise ValueError("Equivalent resistance must be finite and non-negative.")
+
+        if potencia == 0.0:
+            return BatteryPowerSolution(
+                requested_power=0.0,
+                delivered_power=0.0,
+                current=0.0,
+                voltage=voltage_open,
+                max_available_power=(
+                    np.inf if resistance == 0.0
+                    else voltage_open**2 / (4.0 * resistance)
+                ),
+                power_limited=False,
+                residual=0.0,
+            )
+
+        if resistance == 0.0:
+            current = potencia / voltage_open
+            return BatteryPowerSolution(
+                requested_power=potencia,
+                delivered_power=potencia,
+                current=current,
+                voltage=voltage_open,
+                max_available_power=np.inf,
+                power_limited=False,
+                residual=voltage_open * current - potencia,
+            )
+
+        max_available_power = voltage_open**2 / (4.0 * resistance)
+        power_limited = potencia > max_available_power
+        delivered_power = min(potencia, max_available_power)
+        discriminant = max(
+            voltage_open**2 - 4.0 * resistance * delivered_power,
+            0.0,
+        )
+
+        # Stable form of the high-voltage quadratic root.  It avoids the
+        # cancellation in (V0 - sqrt(discriminant)) / (2*R) for small powers.
+        current = (
+            2.0 * delivered_power
+            / (voltage_open + np.sqrt(discriminant))
+        )
+        voltage = voltage_open - resistance * current
+        residual = voltage * current - delivered_power
+
+        if not np.all(np.isfinite((current, voltage, residual))):
+            raise FloatingPointError("Battery power solution is not finite.")
+
+        return BatteryPowerSolution(
+            requested_power=potencia,
+            delivered_power=delivered_power,
+            current=current,
+            voltage=voltage,
+            max_available_power=max_available_power,
+            power_limited=power_limited,
+            residual=residual,
+        )
 
     def calcular_peso_total(self):
         """Return the total pack mass.

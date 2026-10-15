@@ -30,14 +30,15 @@ Isso provoca em cascata:
   • Tensão da bateria oscila entre -4000 V e +100 V
 
 CORREÇÃO:
-  A corrente DC extraída da bateria relaciona-se com a potência elétrica consumida:
-      P_ac = 1.5 × (vd × isd + vq × isq)    [W] — potência AC no frame dq
-      I_bat = P_ac / V_nominal                [A] — corrente DC no barramento
+  A potência DC solicitada ainda é estimada pela potência mecânica e por uma
+  eficiência global aproximada:
+      P_dc_req = max((Kt × isq × wm) / eta_drive, 0)                 [W]
 
-  I_bat é calculada UMA VEZ por passo a partir dos estados e comandos congelados,
-  e passada como parâmetro fixo tanto para calcular_tensao() quanto para a ODE
-  (calcular_derivadas). Isso mantém a consistência entre o cálculo da tensão
-  terminal e a evolução do SoC.
+  A corrente é obtida fechando implicitamente o balanço no lado da bateria:
+      P_dc_entregue = V_terminal(I_bat, SoC, Iast) × I_bat          [W]
+
+  Esse fechamento no barramento DC não constitui validação completa do balanço
+  energético do motor/inversor, que ainda usa eta_drive constante.
 """
 
 import sys
@@ -225,6 +226,8 @@ class Simulation:
 
         self._reset_ic()
         self._init_storage()
+        self.termination_reason = None
+        self.battery_power_limit_event = None
 
     # ─────────────────────────────────────────────────────────────────────────
     # Condições iniciais e armazenamento
@@ -260,6 +263,8 @@ class Simulation:
         'slip_ratio_hist', 'longitudinal_force_hist', 'fz_hist',
         'soc_hist', 'Iast_hist', 'tempo_acumulado_hist',
         'battery_voltage_hist', 'battery_current_hist',
+        'battery_power_requested_hist', 'battery_power_delivered_hist',
+        'battery_power_residual_hist',
         'pedal_position_hist', 'effective_speed_ref_hist',
     )
 
@@ -491,6 +496,8 @@ class Simulation:
         self.id_ctrl.reset()
         self.iq_ctrl.reset()
         self.wm_filt = 0.0   # filtro LP do limitador de velocidade
+        self.termination_reason = 'completed'
+        self.battery_power_limit_event = None
 
         x = self._build_x0()
         t = float(t0)
@@ -504,34 +511,45 @@ class Simulation:
             theta_e = self.p * theta_m
             we      = self.p * wm
 
-            # ── 2. Corrente DC por balanço de potência (CORREÇÃO PRINCIPAL) ──
-            #
-            # P_ac = 1.5 × (vd×isd + vq×isq)   [W - potência elétrica AC/dq]
-            # I_bat = P_ac / V_nominal            [A - corrente DC no banco]
-            #
-            # Usa V_nominal (circuito aberto) no denominador para evitar
-            # referência circular (tensão terminal depende de I_bat).
-            # Apenas potência positiva é extraída da bateria (sem regeneração
-            # neste modelo simplificado).
-            #
-            # Na iteração inicial (isd=isq=0), I_bat=0 e Vdc = Voc nominal.
-            #
-            # P_mec = Ce × wm  com Ce = Kt × isq
+            # ── 2. Balanço de potência DC da bateria ────────────────────────
+            # A demanda ainda usa a aproximação P_dc = P_mec/eta_drive.  O
+            # solver da bateria fecha P_dc = V_terminal(I_bat) × I_bat pela
+            # raiz analítica de alta tensão.  Isso conserva potência no lado
+            # DC, mas não valida o modelo completo do motor/inversor.
             Ce_now = self.Kt * isq
             P_mec  = Ce_now * wm
             P_ac   = max(P_mec / self.eta_drive, 0.0)
-            I_bat  = P_ac / max(self.Vdc_nominal, 1.0)
 
-            # ── 3. Tensão terminal da bateria ────────────────────────────────
-            if self.battery is not None and 0.0 < soc <= 1.0:
-                try:
-                    Vdc = self.battery.calcular_tensao(I_bat, soc, Iast, tacc)
-                    # Protege contra colapso de tensão por parâmetros extremos
-                    Vdc = max(Vdc, self.Vdc_floor)
-                except Exception:
-                    Vdc = self.Vdc_nominal
+            if self.battery is not None:
+                power_solution = self.battery.resolver_potencia_descarga(
+                    P_ac, soc, Iast, tacc)
+                if power_solution.power_limited:
+                    self.termination_reason = 'battery_power_limit'
+                    self.battery_power_limit_event = {
+                        'time': float(t),
+                        'requested_power': power_solution.requested_power,
+                        'max_available_power': power_solution.max_available_power,
+                        'current': power_solution.current,
+                        'voltage': power_solution.voltage,
+                    }
+                    print(
+                        "[BatteryPowerLimit] Simulação encerrada: "
+                        f"t={t:.6f} s  "
+                        f"P_solicitada={power_solution.requested_power:.3f} W  "
+                        f"P_disponível={power_solution.max_available_power:.3f} W  "
+                        f"I={power_solution.current:.3f} A  "
+                        f"V={power_solution.voltage:.3f} V"
+                    )
+                    break
+                I_bat = power_solution.current
+                Vdc = power_solution.voltage
+                P_dc_delivered = power_solution.delivered_power
+                P_dc_residual = power_solution.residual
             else:
+                I_bat = P_ac / max(self.Vdc_nominal, 1.0)
                 Vdc = self.Vdc_nominal
+                P_dc_delivered = Vdc * I_bat
+                P_dc_residual = P_dc_delivered - P_ac
             Vlim = Vdc   # limite de tensão para os comandos do inversor
 
             # ── 4. Controle de torque direto com limitador suave de sobre-rotação ─
@@ -717,6 +735,9 @@ class Simulation:
             self.tempo_acumulado_hist[k]     = tacc
             self.battery_voltage_hist[k]     = Vdc
             self.battery_current_hist[k]     = I_bat   # ← corrente DC real
+            self.battery_power_requested_hist[k] = P_ac
+            self.battery_power_delivered_hist[k] = P_dc_delivered
+            self.battery_power_residual_hist[k]  = P_dc_residual
             self.pedal_position_hist[k]      = pedal_pos
             self.effective_speed_ref_hist[k] = effective_speed_ref
             self.k_log = k + 1
@@ -732,11 +753,16 @@ class Simulation:
         for _name in self._LOG_FIELDS:
             setattr(self, _name, getattr(self, _name)[:n_used])
 
-        print(f"✅ Concluído — {n_used} pontos  "
-              f"t_final={self.tempo[-1]:.3f} s  "
-              f"dist_final={self.vehicle_position[-1]:.2f} m  "
-              f"SoC final={self.soc_hist[-1]:.3f}  "
-              f"Vdc final={self.battery_voltage_hist[-1]:.1f} V")
+        if n_used:
+            print(f"✅ Concluído — {n_used} pontos  "
+                  f"t_final={self.tempo[-1]:.3f} s  "
+                  f"dist_final={self.vehicle_position[-1]:.2f} m  "
+                  f"SoC final={self.soc_hist[-1]:.3f}  "
+                  f"Vdc final={self.battery_voltage_hist[-1]:.1f} V  "
+                  f"status={self.termination_reason}")
+        else:
+            print(f"⛔ Simulação encerrada sem passos integrados  "
+                  f"status={self.termination_reason}")
 
         return {
             't':                      np.array(self.tempo),
@@ -751,6 +777,9 @@ class Simulation:
             'soc':                    np.array(self.soc_hist),
             'battery_voltage':        np.array(self.battery_voltage_hist),
             'battery_current':        np.array(self.battery_current_hist),
+            'battery_power_requested': np.array(self.battery_power_requested_hist),
+            'battery_power_delivered': np.array(self.battery_power_delivered_hist),
+            'battery_power_residual':  np.array(self.battery_power_residual_hist),
             'vehicle_velocity':       np.array(self.vehicle_velocity),
             'vehicle_acceleration':   np.array(self.vehicle_acceleration),
             'vehicle_position':       np.array(self.vehicle_position),
@@ -767,4 +796,6 @@ class Simulation:
             'id_ref':                 np.array(self.id_ref_trace),
             'pedal_position':         np.array(self.pedal_position_hist),
             'effective_speed_ref':    np.array(self.effective_speed_ref_hist),
+            'termination_reason':     self.termination_reason,
+            'battery_power_limit_event': self.battery_power_limit_event,
         }
