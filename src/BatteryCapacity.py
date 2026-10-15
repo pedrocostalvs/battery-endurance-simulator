@@ -3,13 +3,9 @@ import numpy as np
 from Models import BatteryPack, Tire, Transmission, Motor, Vehicle, Pedal
 from Simulation.Simulation import Simulation 
 from Brake import BrakeSystem
+from config.battery_config import BATTERY_PARAMS
 
 
-
-battery_params = {
-        'tipo_celula': "Li-ion", 'n_serie': 144,
-        'n_paralelo': 5, 'soc_inicial': 1.0,
-    }
 
 tire_params = {
             'pacejka_params': dict(Tire.Tire.HOOSIER_FSAE_LONG),
@@ -87,7 +83,7 @@ brake_params = {
     'c_rr': vehicle_params['rolling_resistance']
 }
 
-battery = BatteryPack.BatteryPack(**battery_params)
+battery = BatteryPack.BatteryPack(**BATTERY_PARAMS)
 tire = Tire.Tire(**tire_params)
 transmission = Transmission.Transmission(**transmission_params)
 motor = Motor.Motor(
