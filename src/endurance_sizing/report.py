@@ -1,5 +1,3 @@
-"""Markdown reporting for the preliminary endurance sizing result."""
-
 from pathlib import Path
 
 from .scenario import ScenarioResult

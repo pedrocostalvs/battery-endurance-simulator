@@ -72,6 +72,7 @@ def plot_sprint_energy(
     The function does not display a window by default, keeping command-line
     runs and automated tests non-blocking. Pass ``show=True`` for an
     interactive, non-blocking display, or ``save_path`` to write the figure.
+
     """
     data = sprint_energy_data(simulation)
     time_s = data["time_s"]

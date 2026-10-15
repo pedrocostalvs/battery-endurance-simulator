@@ -238,26 +238,11 @@ class BatteryPack:
 
         return Vt * self.n_serie
 
-    def calcular_resistencia_equivalente(self):
-        """Return the equivalent pack resistance for the current cell model."""
+    def calcular_resistencia_equivalente(self):        
         return self.n_serie * self.R / self.n_paralelo
 
     def resolver_potencia_descarga(self, potencia, soc, Iast, tempo_acumulado):
-        """Solve the implicit DC discharge power balance analytically.
 
-        For the current discharge model, terminal voltage is affine in pack
-        current: ``V = V0 - R_eq * I``.  The method selects the high-voltage,
-        low-current root of ``P = V * I`` using a numerically stable formula.
-
-        If requested power exceeds the mathematical maximum, the returned
-        solution describes the maximum-power point and sets ``power_limited``.
-        The caller must not continue applying the incompatible requested
-        mechanical power.
-
-        Closing this battery-side DC balance does not validate the complete
-        motor/inverter energy balance, whose requested power is still based on
-        an approximate drivetrain efficiency in ``Simulation``.
-        """
         values = {
             'potencia': potencia,
             'soc': soc,

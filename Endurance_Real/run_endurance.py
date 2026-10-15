@@ -5,6 +5,7 @@ working-directory change is required.
 """
 
 from pathlib import Path
+import os
 import sys
 
 
@@ -14,7 +15,10 @@ if str(HERE) not in sys.path:
 
 from config.parameters import SimulationConfig  # noqa: E402
 from simulation.endurance import EnduranceSimulator  # noqa: E402
-from visualization.plots import generate_all_plots  # noqa: E402
+from visualization.plots import (  # noqa: E402
+    generate_all_plots,
+    show_interactive_dashboard,
+)
 
 
 def _maximum(values) -> float:
@@ -75,13 +79,12 @@ def main() -> int:
     simulator = EnduranceSimulator(config)
     results = simulator.run()
     output_dir = HERE / "results"
-    data_path = results.save_npz(output_dir / "endurance_results.npz")
-    plot_paths = generate_all_plots(results, output_dir)
+    results.save_npz(output_dir / "endurance_results.npz")
+    generate_all_plots(results, output_dir)
     print_summary(results, config)
-    print("\n[Arquivos gerados]")
-    print(f"  - {data_path}")
-    for path in plot_paths:
-        print(f"  - {path}")
+    automated = os.environ.get("ENDURANCE_NO_SHOW", "").strip().lower()
+    show_window = automated not in {"1", "true", "yes", "on"}
+    show_interactive_dashboard(results, block=True, show=show_window)
     return 0 if results.status == "completed" else 2
 
 

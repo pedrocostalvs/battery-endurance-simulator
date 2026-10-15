@@ -1,5 +1,3 @@
-"""Longitudinal force, power and energy calculations."""
-
 from dataclasses import dataclass
 from math import cos, sin
 
@@ -36,13 +34,7 @@ def calculate_energy_demand(
     efficiencies: DrivetrainEfficiencies,
     sizing: SizingParameters,
 ) -> EnergyResult:
-    """Calculate discharge energy for a prescribed speed profile.
-
-    Each interval has linearly varying velocity and constant acceleration.
-    Forces and power are evaluated at interval midpoint. The inertial-energy
-    term is consequently exact for every linear interval. Negative wheel
-    power is discarded because regeneration is disabled.
-    """
+    
     dt = np.diff(profile.time_s)
     v0 = profile.velocity_m_s[:-1]
     v1 = profile.velocity_m_s[1:]

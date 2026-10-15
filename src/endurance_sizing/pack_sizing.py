@@ -1,5 +1,3 @@
-"""Series/parallel pack sizing and explicitly qualified checks."""
-
 from dataclasses import dataclass
 from enum import Enum
 from math import ceil

@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 from pathlib import Path
+import os
 import subprocess
 import sys
 import tempfile
@@ -18,7 +19,10 @@ from config.parameters import BatteryConfig, SimulationConfig  # noqa: E402
 from models.battery import BatteryModel  # noqa: E402
 from simulation.endurance import EnduranceSimulator  # noqa: E402
 from simulation.track import ReferenceTrack  # noqa: E402
-from visualization.plots import generate_all_plots  # noqa: E402
+from visualization.plots import (  # noqa: E402
+    create_interactive_dashboard,
+    generate_all_plots,
+)
 
 
 class EnduranceRealTests(unittest.TestCase):
@@ -168,11 +172,27 @@ class EnduranceRealTests(unittest.TestCase):
                 self.assertTrue(path.is_file())
                 self.assertGreater(path.stat().st_size, 1_000)
 
+    def test_interactive_dashboard_has_one_window_with_seven_plots(self):
+        import matplotlib.pyplot as plt
+
+        figure = create_interactive_dashboard(self.results)
+        try:
+            self.assertEqual(len(figure.axes), 8)
+            self.assertTrue(all(axis.get_visible() for axis in figure.axes[:7]))
+            self.assertFalse(figure.axes[7].get_visible())
+            self.assertEqual(
+                [len(axis.lines) for axis in figure.axes[:7]], [1] * 7)
+        finally:
+            plt.close(figure)
+
     def test_entry_point_runs_from_unrelated_working_directory(self):
         with tempfile.TemporaryDirectory() as temporary:
+            environment = os.environ.copy()
+            environment["ENDURANCE_NO_SHOW"] = "1"
             completed = subprocess.run(
                 [sys.executable, str(ROOT / "run_endurance.py")],
                 cwd=temporary,
+                env=environment,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -182,6 +202,9 @@ class EnduranceRealTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, msg=completed.stderr)
         self.assertIn("Distância:              22000.000000 m", completed.stdout)
         self.assertIn("Status:                 COMPLETED", completed.stdout)
+        self.assertNotIn("[Arquivos gerados]", completed.stdout)
+        self.assertNotIn(".png", completed.stdout)
+        self.assertNotIn(".npz", completed.stdout)
 
 
 if __name__ == "__main__":
