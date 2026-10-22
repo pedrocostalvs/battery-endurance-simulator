@@ -40,6 +40,12 @@ class RitmoPiloto:
     horizonte: float = 150.0             # [m] quanto o piloto olha à frente
 
 
+# Ritmo recomendado para o Endurance (calibração da Fase 5, ver calibracao.py):
+# o mais rápido testado que termina os 22 km com SoC final de ~36%, folga para as
+# hipóteses ainda abertas (massa com piloto, CG, arrefecimento).
+RITMO_ENDURANCE = dict(fator_curva=1.0, torque_maximo=120.0, velocidade_maxima=None, tempo_rolagem=0.5)
+
+
 @dataclass
 class Decisao:
     modo: str

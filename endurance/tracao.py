@@ -173,7 +173,7 @@ def extrair_mapa(sim, passo_velocidade=0.25, t_inicial=0.05):
     return mapa
 
 
-def gerar_mapa(salvar=True):
+def gerar_mapa(salvar=True, arquivo=ARQUIVO_MAPA):
     inicio = time.time()
     sim = rodar_aceleracao()
     mapa = extrair_mapa(sim)
@@ -181,7 +181,7 @@ def gerar_mapa(salvar=True):
     mapa["tempo_execucao"] = np.array(time.time() - inicio)
     if salvar:
         PASTA_RESULTADOS.mkdir(exist_ok=True)
-        np.savez(ARQUIVO_MAPA, **mapa)
+        np.savez(arquivo, **mapa)
     return mapa, sim
 
 
@@ -190,7 +190,7 @@ class MapaTracao:
 
     def __init__(self, arquivo=ARQUIVO_MAPA):
         if not Path(arquivo).exists():
-            gerar_mapa()
+            gerar_mapa(arquivo=arquivo)
         dados = np.load(arquivo)
         self.v = dados["velocidade"]
         self.dados = {k: dados[k] for k in dados.files}

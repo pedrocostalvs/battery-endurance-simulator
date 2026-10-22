@@ -29,7 +29,7 @@ from bateria import Bateria
 from dinamica import Dinamica
 from motor import TabelaEficiencia
 from pista import Pista
-from piloto import ACELERAR, FREAR, MANTER, ROLAR, Piloto, RitmoPiloto
+from piloto import ACELERAR, FREAR, MANTER, ROLAR, RITMO_ENDURANCE, Piloto, RitmoPiloto
 from tracao import MapaTracao
 
 CAMPOS = ("tempo", "distancia", "velocidade", "aceleracao", "modo", "torque_motor", "rpm_motor",
@@ -226,6 +226,6 @@ def imprimir_resumo(res):
 
 
 if __name__ == "__main__":
-    sim = SimuladorEndurance()
+    sim = SimuladorEndurance(ritmo=RitmoPiloto(**RITMO_ENDURANCE))
     r = sim.rodar(mostrar_progresso=True)
     imprimir_resumo(r["resumo"])
