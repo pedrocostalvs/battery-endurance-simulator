@@ -15,7 +15,9 @@ são o freio e as resistências, então a massa vista pelo carro é
 
     m_eq = m + J_eff · (N / r)²
 
-com o mesmo J_eff da Simulation.
+com o mesmo J_eff da Simulation. Acelerando com torque abaixo do limite do
+pneu, a massa vista é m + J_eff·(N/r)²·η (o torque das partes girantes passa
+pela transmissão).
 """
 import math
 
@@ -44,6 +46,9 @@ class Dinamica:
         j_translacao = v.mass * (self.r / self.N) ** 2
         self.j_eff = max(self.motor.jm + j_all - j_translacao, self.motor.jm)
         self.m_eq = self.m + self.j_eff * (self.N / self.r) ** 2
+        # acelerando, o torque para girar J_eff passa pela transmissão (η):
+        # Ft = (T - J_eff·a·N/r)·N·η/r  ->  a·(m + J_eff·(N/r)²·η) = T·N·η/r - F_res
+        self.m_eq_tracao = self.m + self.j_eff * (self.N / self.r) ** 2 * self.eta_trans
 
     # --- cinemática do trem de força -------------------------------------
     def rpm_motor(self, velocidade):
