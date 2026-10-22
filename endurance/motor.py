@@ -17,7 +17,7 @@ def criar_componentes():
     transmissao = Transmission.Transmission(**config.TRANSMISSAO)
     pneu = Tire.Tire(
         pacejka_params=dict(Tire.Tire.HOOSIER_FSAE_LONG),
-        tire_friction_coef=config.MU_PNEU,
+        tire_friction_coef=config.FATOR_MU_PACEJKA,   # fator, dá μ efetivo de 1,3 em Fz0
         Fz0=654.0,
         camber=0.0,
     )

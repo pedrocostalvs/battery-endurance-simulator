@@ -44,6 +44,11 @@ AERO = {                        # mantido como está no código atual
 # Pneu
 # ---------------------------------------------------------------------------
 MU_PNEU = 1.3                   # CONHECIDO (confirmado pela equipe)
+# No Tire do Marco (Pacejka Hoosier), tire_friction_coef é um FATOR sobre o μ de
+# bancada, que vale 3,514 na carga de referência Fz0 = 654 N. Para μ efetivo de
+# 1,3 o fator é 1,3/3,514 = 0,37. (O 0,6 antigo dava μ efetivo ~2,1.)
+MU_BANCADA_PACEJKA = 3.514
+FATOR_MU_PACEJKA = MU_PNEU / MU_BANCADA_PACEJKA
 
 # ---------------------------------------------------------------------------
 # Transmissão
