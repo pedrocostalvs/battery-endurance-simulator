@@ -27,7 +27,7 @@ def main(mostrar=False):
 
     PASTA_GRAFICOS.mkdir(parents=True, exist_ok=True)
     (PASTA_GRAFICOS.parent / "resumo_endurance.txt").write_text(resumo + "\n", encoding="utf-8")
-    np.savez(PASTA_GRAFICOS.parent / "endurance_resultado.npz", **{k: r[k] for k in CAMPOS})
+    np.savez_compressed(PASTA_GRAFICOS.parent / "endurance_resultado.npz", **{k: r[k] for k in CAMPOS})
     arquivos = graficos(r, sim.pista, mostrar=mostrar)
     print(f"\n{len(arquivos)} gráficos em {PASTA_GRAFICOS}")
     return r
