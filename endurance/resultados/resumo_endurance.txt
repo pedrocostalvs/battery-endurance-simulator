@@ -1,0 +1,16 @@
+RESUMO DO ENDURANCE (simulação, não validada experimentalmente)
+Ritmo: curva 1.00 | torque 120 N·m | vel. máx livre | rolagem 0.5 s
+Status: completo (distancia_atingida)
+Distância: 22.00 km em 25.4 min (32 voltas)
+Volta média: 46.6 s | velocidade média 52.0 km/h, máxima 93.4 km/h
+Energia: 4.97 kWh (226 Wh/km) | SoC final 36.2%
+Potência: média 11.7 kW, máxima 67.1 kW, maior média de 60 s 13.2 kW
+Pack: 471 a 585 V | célula até 28.4 A e 48.6 °C
+Tempo em cada modo: acelerando 28%, mantendo 36%, rolando 16%, freando 20%
+Acima da rotação base do motor: 2.0% do tempo
+
+Verificações:
+  Potência contínua do motor (hipótese AC/LC, 28 kW): maior média de 60 s = 13.2 kW -> ok
+  Corrente da célula (30 A com corte térmico): 28.4 A -> ok
+  Temperatura da célula (corte em 80 °C no datasheet): 48.6 °C -> ok
+  SoC final acima de 20%: ok
