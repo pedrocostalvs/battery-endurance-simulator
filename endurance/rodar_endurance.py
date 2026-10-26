@@ -1,9 +1,3 @@
-"""Roda o Endurance de 22 km com o ritmo recomendado e salva gráficos e resumo.
-
-No VS Code: abra este arquivo e clique em Run Python File (▶).
-Pelo terminal, da raiz do repositório:
-    python endurance/rodar_endurance.py
-"""
 import sys
 
 import numpy as np
